@@ -24,6 +24,7 @@ from app.routes.settings    import router as settings_router
 from app.routes.templates   import router as templates_router
 from app.routes.webhook     import router as webhook_router
 from app.routes.activity_log import router as activity_log_router
+from app.routes.billing_webhooks import router as billing_webhooks_router
 
 
 # ─────────────────────────────────────────
@@ -207,6 +208,7 @@ app.include_router(settings_router)
 app.include_router(templates_router)
 app.include_router(webhook_router)
 app.include_router(activity_log_router)
+app.include_router(billing_webhooks_router)
 
 
 # ─────────────────────────────────────────

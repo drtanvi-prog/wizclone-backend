@@ -466,6 +466,34 @@ def _elapsed_ms(start: datetime) -> int:
 # Main polling loop
 # ══════════════════════════════════════════════════════════════
 
+async def run_billing_cron():
+    """
+    Runs every hour to check for expired, cancelled subscriptions
+    and downgrades their workspace.plan_tier to 'FREE'.
+    """
+    print("[Worker] Billing cron started. Checking for expired subs every hour.")
+    while True:
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            subs = supabase_db.table("workspace_subscriptions") \
+                .select("workspace_id") \
+                .eq("billing_status", "CANCELLED") \
+                .lte("current_period_end", now) \
+                .execute()
+                
+            for sub in subs.data:
+                ws_id = sub["workspace_id"]
+                # Downgrade them to FREE (if not already)
+                supabase_db.table("workspaces") \
+                    .update({"plan_tier": "FREE"}) \
+                    .eq("id", ws_id) \
+                    .neq("plan_tier", "FREE") \
+                    .execute()
+        except Exception as e:
+            print(f"[Worker] Billing cron error: {e}")
+            
+        await asyncio.sleep(3600) # Sleep 1 hour
+
 async def run_worker():
     """
     Polls queue_jobs every 3 seconds.
@@ -474,6 +502,9 @@ async def run_worker():
     """
     print("[Worker] WizClone background worker started")
     print(f"[Worker] Polling every {POLL_INTERVAL}s")
+    
+    # Start the billing background cron job concurrently
+    asyncio.create_task(run_billing_cron())
 
     while True:
         try:
