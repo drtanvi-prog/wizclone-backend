@@ -1,19 +1,15 @@
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Body
 import json
 from app.core.database import db
 
 router = APIRouter(prefix="/api/webhooks", tags=["Billing Webhooks"])
 
 @router.post("/app-events")
-async def handle_app_events(request: Request):
+async def handle_app_events(body: dict = Body(...)):
     """
     Catches ALL app lifecycle and billing events from monday.com
     (e.g., app_subscription_created, uninstall)
     """
-    try:
-        body = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
     print("\n[billing webhook] ┌── Received monday.com App Event!")
     print(f"[billing webhook] │ Payload: {json.dumps(body, indent=2)}")
