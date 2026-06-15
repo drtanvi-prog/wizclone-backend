@@ -28,7 +28,11 @@ async def handle_app_events(request: Request):
     # Extract data from the monday.com payload
     event_data = body.get("data", {})
     account_id = event_data.get("account_id")
-    monday_plan_slug = event_data.get("plan_id") # Monday's string ID (e.g. 'pro')
+    
+    # Monday sends billing details inside the 'subscription' object
+    subscription = event_data.get("subscription", {})
+    monday_plan_slug = subscription.get("plan_id") or event_data.get("plan_id")
+    renewal_date = subscription.get("renewal_date")
     
     # Example structure for monday.com billing events
     if event_type == "app_subscription_created":
@@ -47,12 +51,18 @@ async def handle_app_events(request: Request):
                         db_plan_uuid = plan_res.data[0]["id"]
                         
                         # 2. Upsert into workspace_subscriptions using the EXACT schema!
-                        db.table("workspace_subscriptions").upsert({
-                            "workspace_id":    workspace_uuid,
-                            "plan_id":         db_plan_uuid, # Must be the UUID!
-                            "billing_status":  "ACTIVE",
-                            "is_active":       True
-                        }).execute()
+                        upsert_data = {
+                            "workspace_id":       workspace_uuid,
+                            "plan_id":            db_plan_uuid, # Must be the UUID!
+                            "billing_status":     "ACTIVE",
+                            "is_active":          True
+                        }
+                        
+                        # Add the dates if monday sent them to avoid NULLs!
+                        if renewal_date:
+                            upsert_data["current_period_end"] = renewal_date
+                            
+                        db.table("workspace_subscriptions").upsert(upsert_data).execute()
                         
                         # 3. CRITICAL FIX: Sync the plan_tier on the workspaces table so workers know!
                         db.table("workspaces").update({
