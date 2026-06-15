@@ -428,10 +428,11 @@ async def delete_template(
 
     return {"success": True, "message": "Template deleted successfully"}
 # ─────────────────────────────────────────
-# POST /api/ai-suggestions/{workspaceId}
 # ─────────────────────────────────────────
-@router.post("/ai-suggestions/{workspaceId}")
-async def ai_match(
+# POST /api/generate_template/{workspaceId}
+# ─────────────────────────────────────────
+@router.post("/generate_template/{workspaceId}")
+async def generate_template(
     request:     Request,
     workspaceId: str,
     body:        AIRequest,
