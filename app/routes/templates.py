@@ -440,21 +440,21 @@ async def generate_template(
 ):
     """
     The Groq AI matching directly!
-    Pass any item_name to see which template the AI picks.
+    Pass any prompt to see which template the AI picks.
     """
     workspace_uuid = get_workspace_uuid_for_request(request, workspaceId, db)
 
     # Run AI generation
     from app.services.matching_services import generate_template_from_ai
-    result = await generate_template_from_ai(body.item_name)
+    result = await generate_template_from_ai(body.prompt)
     
     if result:
         return {
-            "item": body.item_name,
+            "prompt": body.prompt,
             "ai_result": result,
         }
     else:
         return {
-            "item": body.item_name,
+            "prompt": body.prompt,
             "error": "AI failed to generate a template.",
         }
