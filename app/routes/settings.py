@@ -333,12 +333,11 @@ async def save_settings(
     failed_boards = []
     if body.boards is not None:
 
-        # Fetch all current board states in one query
+        # Fetch all current and past board states in one query to allow resurrecting deleted boards
         try:
             all_existing_result = db.table("monitored_boards") \
                 .select("*") \
                 .eq("workspace_id", workspace_uuid) \
-                .is_("deleted_at",  "null") \
                 .execute()
             existing_map = {
                 str(b["board_id"]): b
@@ -400,6 +399,7 @@ async def save_settings(
                         "webhook_id":     str(webhook_id) if webhook_id else None,
                         "webhook_status": "ACTIVE" if webhook_id else "DISABLED",
                         "is_active":      True,
+                        "deleted_at":     None, # Automatically resurrect if soft-deleted
                     }
 
                     try:
@@ -431,6 +431,7 @@ async def save_settings(
                     "is_enabled":     board.board_enabled,  # Preserve the user's checkbox state!
                     "webhook_id":     None,
                     "webhook_status": "DISABLED",
+                    "deleted_at":     None, # Automatically resurrect if soft-deleted
                 }
 
                 try:
@@ -478,3 +479,63 @@ async def save_settings(
         "failed_boards": failed_boards,
         "boards":  boards_data,
     }
+
+
+# ─────────────────────────────────────────
+# DELETE /api/settings/{workspaceId}/boards/{boardId}
+# ─────────────────────────────────────────
+@router.delete("/{workspaceId}/boards/{boardId}")
+async def delete_monitored_board(
+    request:     Request,
+    workspaceId: str,
+    boardId:     int,
+    db:          Client = Depends(get_db),
+):
+    """
+    Deletes a monitored board (triggered by the trash icon).
+    Removes the webhook from monday.com and soft deletes it from the DB.
+    """
+    workspace = get_workspace_by_monday_id(workspaceId, db)
+    workspace_uuid = workspace["id"]
+    access_token   = workspace["access_token"]
+
+    # 1. Fetch the board to see if it has a webhook
+    try:
+        board_res = db.table("monitored_boards") \
+            .select("*") \
+            .eq("workspace_id", workspace_uuid) \
+            .eq("board_id", boardId) \
+            .is_("deleted_at", "null") \
+            .single() \
+            .execute()
+        board = board_res.data
+    except Exception:
+        raise HTTPException(status_code=404, detail="Board not found or already deleted")
+        
+    if not board:
+        raise HTTPException(status_code=404, detail="Board not found or already deleted")
+
+    # 2. Delete webhook from monday.com if it exists
+    webhook_id = board.get("webhook_id")
+    if webhook_id:
+        try:
+            await delete_webhook(access_token, webhook_id)
+        except Exception as e:
+            print(f"[delete board] delete_webhook failed: {e}")
+            
+    # 3. Soft delete from database
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        db.table("monitored_boards") \
+            .update({
+                "deleted_at": now, 
+                "is_enabled": False, 
+                "webhook_id": None, 
+                "webhook_status": "DISABLED"
+            }) \
+            .eq("id", board["id"]) \
+            .execute()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete board from DB: {e}")
+
+    return {"success": True, "message": "Board successfully removed from monitored list"}
