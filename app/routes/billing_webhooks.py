@@ -67,8 +67,13 @@ async def handle_app_events(
                         }
                         if renewal_date:
                             upsert_data["current_period_end"] = renewal_date
-                            
-                        db.table("workspace_subscriptions").upsert(upsert_data).execute()
+                        
+                        # Safe upsert handling without primary key
+                        existing_sub = db.table("workspace_subscriptions").select("id").eq("workspace_id", workspace_uuid).execute()
+                        if existing_sub.data:
+                            db.table("workspace_subscriptions").update(upsert_data).eq("id", existing_sub.data[0]["id"]).execute()
+                        else:
+                            db.table("workspace_subscriptions").insert(upsert_data).execute()
                         db.table("workspaces").update({
                             "plan_tier": str(monday_plan_slug).upper(),
                             "status": "ACTIVE",
@@ -119,12 +124,18 @@ async def handle_app_events(
                     workspace_uuid = ws_res.data[0]["id"]
                     plan_res = db.table("plans").select("id").ilike("plan_name", "PRO").limit(1).execute()
                     if plan_res.data:
-                        db.table("workspace_subscriptions").upsert({
+                        upsert_data = {
                             "workspace_id": workspace_uuid,
                             "plan_id": plan_res.data[0]["id"],
                             "billing_status": "TRIAL",
                             "is_active": True
-                        }).execute()
+                        }
+                        existing_sub = db.table("workspace_subscriptions").select("id").eq("workspace_id", workspace_uuid).execute()
+                        if existing_sub.data:
+                            db.table("workspace_subscriptions").update(upsert_data).eq("id", existing_sub.data[0]["id"]).execute()
+                        else:
+                            db.table("workspace_subscriptions").insert(upsert_data).execute()
+                            
                         db.table("workspaces").update({
                             "plan_tier": "PRO"
                         }).eq("id", workspace_uuid).execute()
