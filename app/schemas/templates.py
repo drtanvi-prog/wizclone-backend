@@ -79,4 +79,4 @@ class TemplatesListResponse(BaseModel):
     total_pages:  int
     templates:    List[TemplateResponse]
 class AIRequest(BaseModel):
-    item_name: str
+    prompt: str

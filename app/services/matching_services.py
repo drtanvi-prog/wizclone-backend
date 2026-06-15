@@ -306,10 +306,10 @@ async def _ai_semantic_match(
         print(f"[matching] Groq API error: {e} — using difflib")
         return None
 
-async def generate_template_from_ai(item_name: str) -> dict | None:
+async def generate_template_from_ai(prompt: str) -> dict | None:
     """
     Pure AI Generator for the frontend.
-    Generates a template name and subitems based on the item name without looking at DB templates.
+    Generates a template name and subitems based on the prompt without looking at DB templates.
     """
     from app.core.config import settings
     import httpx
@@ -317,12 +317,12 @@ async def generate_template_from_ai(item_name: str) -> dict | None:
     if not settings.groq_api_key and not settings.deepseek_api_key:
         return None
 
-    prompt = (
+    ai_prompt = (
         f"You are an intelligent task management assistant.\n"
         f"Given a user prompt/item name, generate a categorized 'Template Name' "
         f"that describes this type of work.\n"
         f"ALSO, dynamically generate 3 to 5 specific subtasks to complete this item.\n\n"
-        f"User Prompt: {item_name}\n\n"
+        f"User Prompt: {prompt}\n\n"
         f"Reply with ONLY this format (nothing else):\n"
         f"<Generated Template Name>\n"
         f"- <subtask 1>\n"
@@ -348,7 +348,7 @@ async def generate_template_from_ai(item_name: str) -> dict | None:
                     },
                     json={
                         "model":      "llama-3.1-8b-instant",
-                        "messages":   [{"role": "user", "content": prompt}],
+                        "messages":   [{"role": "user", "content": ai_prompt}],
                         "max_tokens": 150,
                     },
                 )
@@ -372,7 +372,7 @@ async def generate_template_from_ai(item_name: str) -> dict | None:
                     },
                     json={
                         "model":      "deepseek-chat",
-                        "messages":   [{"role": "user", "content": prompt}],
+                        "messages":   [{"role": "user", "content": ai_prompt}],
                         "max_tokens": 150,
                     },
                 )
@@ -403,8 +403,8 @@ async def generate_template_from_ai(item_name: str) -> dict | None:
                 ai_subitems.append(line.lstrip("- ").strip())
 
         return {
-            "suggested_item_name": suggested_name,
-            "ai_suggested_subitems": ai_subitems,
+            "template_name": suggested_name,
+            "subitems": ai_subitems,
         }
 
     except Exception:
