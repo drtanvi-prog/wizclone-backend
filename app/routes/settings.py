@@ -319,7 +319,8 @@ async def save_settings(
             except Exception as e:
                 print(f"[save] DB disable failed for board {board['board_id']}: {e}")
 
-        await asyncio.gather(*[_global_off_board(b) for b in all_boards])
+        for b in all_boards:
+            await _global_off_board(b)
 
     # ══════════════════════════════════════════════════════
     # PART 3 — Individual board toggles
@@ -454,7 +455,10 @@ async def save_settings(
 
             return error_board_name
 
-        results = await asyncio.gather(*[process_board(b) for b in body.boards])
+        results = []
+        for b in body.boards:
+            results.append(await process_board(b))
+            
         failed_boards = [name for name in results if name is not None]
 
     # ── Return final board states ──
