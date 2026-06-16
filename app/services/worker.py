@@ -34,7 +34,7 @@ import traceback
 from datetime import datetime, timezone, timedelta
 
 from app.core.database   import db as supabase_db
-from app.services.monday_services   import create_subitem
+from app.services.monday_services   import create_subitem, get_item_subitems
 from app.services.matching_services  import match_item_to_template
 
 # How often the worker polls queue_jobs (seconds)
@@ -50,9 +50,11 @@ RETRY_DELAYS = [1, 4, 16]
 
 async def process_job(job: dict):
     """
-    Process a single MATCHING job end-to-end.
-    Called by the polling loop for each pending job.
+    Process a single MATCHING or CHECK_SUBITEMS job end-to-end.
     """
+    if job.get("job_type") == "CHECK_SUBITEMS":
+        return await process_check_subitems_job(job)
+
     job_id     = job["id"]
     payload    = job.get("payload", {})
     start_time = datetime.now(timezone.utc)
@@ -130,6 +132,7 @@ async def process_job(job: dict):
                 processing_ms = _elapsed_ms(start_time),
             )
             _update_usage(workspace_uuid, copies_added=0, is_no_match=True)
+            _schedule_check_manual_subitems(workspace_uuid, item_id, item_name, payload)
             await _complete_job(job_id)
             return
 
@@ -169,6 +172,7 @@ async def process_job(job: dict):
                 processing_ms = _elapsed_ms(start_time),
             )
             _update_usage(workspace_uuid, copies_added=0, is_no_match=True)
+            _schedule_check_manual_subitems(workspace_uuid, item_id, item_name, payload)
             await _complete_job(job_id)
             return
 
@@ -276,6 +280,90 @@ async def process_job(job: dict):
         traceback.print_exc()
         _handle_job_failure(job_id, automation_event_id, attempt_count, max_attempts, str(e))
 
+
+async def process_check_subitems_job(job: dict):
+    job_id     = job["id"]
+    payload    = job.get("payload", {})
+    item_id    = payload.get("item_id")
+    item_name  = payload.get("item_name", "")
+    workspace_uuid = payload.get("workspace_id")
+
+    supabase_db.table("queue_jobs").update({
+        "status":     "RUNNING",
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", job_id).execute()
+
+    try:
+        ws = supabase_db.table("workspaces").select("access_token").eq("id", workspace_uuid).single().execute()
+        if not ws.data:
+            raise Exception("Workspace not found")
+        access_token = ws.data["access_token"]
+
+        subitem_names = await get_item_subitems(item_id, access_token)
+        if not subitem_names or len(subitem_names) < 2:
+            await _complete_job(job_id)
+            return
+
+        pattern_hash = item_name.strip().lower()
+        if not pattern_hash:
+            await _complete_job(job_id)
+            return
+
+        existing = supabase_db.table("ai_suggestions") \
+            .select("*") \
+            .eq("workspace_id", workspace_uuid) \
+            .eq("pattern_hash", pattern_hash) \
+            .is_("deleted_at", "null") \
+            .execute()
+
+        if existing.data:
+            sugg = existing.data[0]
+            if sugg["status"] != "PENDING":
+                await _complete_job(job_id)
+                return
+            
+            detected = sugg.get("detected_item_names", [])
+            new_count = sugg["occurrence_count"]
+            if item_name not in detected:
+                detected.append(item_name)
+                new_count += 1
+            else:
+                new_count += 1
+
+            supabase_db.table("ai_suggestions").update({
+                "occurrence_count": new_count,
+                "detected_item_names": detected,
+                "suggested_subitems": subitem_names
+            }).eq("id", sugg["id"]).execute()
+        else:
+            suggested_template_name = item_name.title()
+            supabase_db.table("ai_suggestions").insert({
+                "workspace_id": workspace_uuid,
+                "pattern_hash": pattern_hash,
+                "suggested_template_name": suggested_template_name,
+                "detected_item_names": [item_name],
+                "occurrence_count": 1,
+                "suggested_subitems": subitem_names,
+                "status": "PENDING"
+            }).execute()
+
+        await _complete_job(job_id)
+    except Exception as e:
+        _handle_job_failure(job_id, None, job.get("attempt_count", 0) + 1, 3, str(e))
+
+
+def _schedule_check_manual_subitems(workspace_uuid, item_id, item_name, payload):
+    run_at = (datetime.now(timezone.utc) + timedelta(minutes=60)).isoformat()
+    try:
+        supabase_db.table("queue_jobs").insert({
+            "workspace_id": workspace_uuid,
+            "job_type": "CHECK_SUBITEMS",
+            "status": "PENDING",
+            "next_retry_at": run_at,
+            "payload": payload
+        }).execute()
+    except Exception as e:
+        print(f"[Worker] Failed to schedule CHECK_SUBITEMS: {e}")
 
 # ══════════════════════════════════════════════════════════════
 # Step 10 — Usage tracking
@@ -513,7 +601,7 @@ async def run_worker():
             jobs = supabase_db.table("queue_jobs") \
                 .select("*") \
                 .eq("status",   "PENDING") \
-                .eq("job_type", "MATCHING") \
+                .in_("job_type", ["MATCHING", "CHECK_SUBITEMS"]) \
                 .or_(f"next_retry_at.is.null,next_retry_at.lte.{now}") \
                 .order("priority",   desc=True) \
                 .order("created_at", desc=False) \

@@ -117,3 +117,35 @@ async def create_subitem(
 
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+async def get_item_subitems(item_id: int, access_token: str) -> list[str]:
+    """Fetch subitems of an item to check for manual additions."""
+    query = """
+    query GetSubitems($itemId: [ID!]) {
+      items(ids: $itemId) {
+        subitems {
+          name
+        }
+      }
+    }
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(
+                MONDAY_API_URL,
+                json={"query": query, "variables": {"itemId": [str(item_id)]}},
+                headers={
+                    "Authorization": access_token,
+                    "Content-Type":  "application/json",
+                    "API-Version":   "2024-01",
+                },
+            )
+        data = response.json()
+        items = data.get("data", {}).get("items", [])
+        if not items:
+            return []
+        subitems = items[0].get("subitems", [])
+        return [sub["name"] for sub in subitems]
+    except Exception as e:
+        print(f"[monday_services] get_item_subitems error: {e}")
+        return []

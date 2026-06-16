@@ -49,6 +49,7 @@ class SettingsResponse(BaseModel):
     boards: List[BoardSetting] = []
     sensitivity: str = "BALANCED"
     automation_enabled: bool = True
+    template_board_deleted: bool = False
 
 
 # ─────────────────────────────────────────

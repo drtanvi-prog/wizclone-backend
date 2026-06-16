@@ -92,7 +92,7 @@ async def load_settings(
 
     try:
         ws_result = db.table("workspace_settings") \
-            .select("ai_sensitivity, is_enabled") \
+            .select("ai_sensitivity, is_enabled, template_board_id, template_board_deleted") \
             .eq("workspace_id", workspace_uuid) \
             .single() \
             .execute()
@@ -127,6 +127,26 @@ async def load_settings(
         monday_board_map = {str(b["id"]): b["name"] for b in monday_boards}
 
         now = datetime.now(timezone.utc).isoformat()
+
+        # ── Check if Template Board was deleted ──
+        template_board_id = ws_data.get("template_board_id")
+        if template_board_id and str(template_board_id) not in monday_board_ids:
+            if not ws_data.get("template_board_deleted"):
+                print(f"[load] Template Board {template_board_id} was deleted! Workspace paused.")
+                try:
+                    db.table("workspace_settings") \
+                        .update({"template_board_deleted": True}) \
+                        .eq("workspace_id", workspace_uuid) \
+                        .execute()
+                    
+                    db.table("workspaces") \
+                        .update({"is_paused": True, "paused_reason": "template_board_deleted"}) \
+                        .eq("id", workspace_uuid) \
+                        .execute()
+                        
+                    ws_data["template_board_deleted"] = True
+                except Exception as e:
+                    print(f"[load] Failed to pause workspace after template board deletion: {e}")
 
         # Deleted boards → delete webhook + soft delete from DB
         deleted_board_ids = db_board_ids - monday_board_ids
@@ -188,6 +208,7 @@ async def load_settings(
         boards             = boards,
         sensitivity        = ws_data.get("ai_sensitivity", "BALANCED"),
         automation_enabled = ws_data.get("is_enabled", True),
+        template_board_deleted = ws_data.get("template_board_deleted", False),
     )
 
 
