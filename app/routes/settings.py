@@ -374,6 +374,7 @@ async def save_settings(
                                 "is_enabled":     True,
                                 "webhook_status": "ACTIVE",
                                 "board_name":     board.board_name,
+                                "deleted_at":     None,
                             }) \
                             .eq("workspace_id", workspace_uuid) \
                             .eq("board_id",     board.board_id) \
