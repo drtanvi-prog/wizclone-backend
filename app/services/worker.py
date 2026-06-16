@@ -52,7 +52,8 @@ async def process_job(job: dict):
     """
     Process a single MATCHING or CHECK_SUBITEMS job end-to-end.
     """
-    if job.get("job_type") == "CHECK_SUBITEMS":
+    payload = job.get("payload", {})
+    if payload.get("action") == "CHECK_SUBITEMS":
         return await process_check_subitems_job(job)
 
     job_id     = job["id"]
@@ -354,13 +355,17 @@ async def process_check_subitems_job(job: dict):
 
 def _schedule_check_manual_subitems(workspace_uuid, item_id, item_name, payload):
     run_at = (datetime.now(timezone.utc) + timedelta(minutes=60)).isoformat()
+    
+    new_payload = dict(payload) if payload else {}
+    new_payload["action"] = "CHECK_SUBITEMS"
+    
     try:
         supabase_db.table("queue_jobs").insert({
             "workspace_id": workspace_uuid,
-            "job_type": "CHECK_SUBITEMS",
+            "job_type": "MATCHING",
             "status": "PENDING",
             "next_retry_at": run_at,
-            "payload": payload
+            "payload": new_payload
         }).execute()
     except Exception as e:
         print(f"[Worker] Failed to schedule CHECK_SUBITEMS: {e}")
@@ -601,7 +606,7 @@ async def run_worker():
             jobs = supabase_db.table("queue_jobs") \
                 .select("*") \
                 .eq("status",   "PENDING") \
-                .in_("job_type", ["MATCHING", "CHECK_SUBITEMS"]) \
+                .eq("job_type", "MATCHING") \
                 .or_(f"next_retry_at.is.null,next_retry_at.lte.{now}") \
                 .order("priority",   desc=True) \
                 .order("created_at", desc=False) \
