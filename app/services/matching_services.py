@@ -490,6 +490,7 @@ async def match_item_to_template(
     templates:      list[dict],   # [{"id": uuid, "name": str}, ...]
     access_token:   str,
     sensitivity:    str = DEFAULT_SENSITIVITY,
+    allow_ai:       bool = True,
 ) -> dict:
     """
     Main entry point for C-04 matching.
@@ -524,7 +525,7 @@ async def match_item_to_template(
 
     # ── Try Groq AI first ──
     result = None
-    if USE_AI_MATCHING:
+    if USE_AI_MATCHING and allow_ai:
         try:
             result = await _ai_semantic_match(item_name, template_names)
         except Exception:

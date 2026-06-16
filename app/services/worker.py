@@ -117,6 +117,45 @@ async def process_job(job: dict):
 
         templates = templates_result.data or []
 
+        # ── Step 3.5: Enforce Billing Limits ──
+        cycle_start = start_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0).date().isoformat()
+        usage_res = supabase_db.table("usage_metrics") \
+            .select("copies_used") \
+            .eq("workspace_id", workspace_uuid) \
+            .eq("billing_cycle_start", cycle_start) \
+            .execute()
+            
+        copies_used = 0
+        if usage_res.data:
+            copies_used = usage_res.data[0].get("copies_used", 0)
+            
+        if plan_tier.upper() == "FREE" and copies_used >= 50:
+            print(f"[Worker] Free tier limit reached (50 copies) — skipping job {job_id}")
+            await _update_event(
+                event_id=automation_event_id, status="FAILED", copied=0, failed=0,
+                template_id=None, template_name=None, confidence=0.0,
+                method="EXACT_MATCH", ai_used=False, processing_ms=_elapsed_ms(start_time), failed_names=[]
+            )
+            supabase_db.table("automation_events").update({
+                "error_details": "Free plan limit hit (50 copies/month). Please upgrade."
+            }).eq("id", automation_event_id).execute()
+            await _complete_job(job_id)
+            return
+
+        elif plan_tier.upper() == "PRO" and copies_used >= 500:
+            print(f"[Worker] Pro tier limit reached (500 copies) — skipping job {job_id}")
+            await _update_event(
+                event_id=automation_event_id, status="FAILED", copied=0, failed=0,
+                template_id=None, template_name=None, confidence=0.0,
+                method="EXACT_MATCH", ai_used=False, processing_ms=_elapsed_ms(start_time), failed_names=[]
+            )
+            supabase_db.table("automation_events").update({
+                "error_details": "Pro plan limit hit (500 copies/month). Please upgrade."
+            }).eq("id", automation_event_id).execute()
+            await _complete_job(job_id)
+            return
+
+
         # ── Step 4: No templates → NO_MATCH ──
         if not templates:
             print(f"[Worker] No templates found for workspace — NO_MATCH")
@@ -143,11 +182,14 @@ async def process_job(job: dict):
         #   - substring boosts
         #   - sensitivity threshold check
         #   - Models API slot (when monday approves access)
+        allow_ai = (plan_tier.upper() != "FREE")
+        
         match = await match_item_to_template(
             item_name    = item_name,
             templates    = templates,          # list of {id, name, usage_count}
             access_token = access_token,       # used by Models API when enabled
             sensitivity  = sensitivity,
+            allow_ai     = allow_ai,
         )
 
         print(
@@ -219,6 +261,21 @@ async def process_job(job: dict):
                 copied_count += 1
                 print(f"[Worker]   ✓ '{subitem_name}'")
             else:
+                if "401" in result["error"]:
+                    print(f"[Worker] Token revoked! Disabling workspace {workspace_uuid}")
+                    try:
+                        supabase_db.table("workspace_settings").update({"is_enabled": False}).eq("workspace_id", workspace_uuid).execute()
+                        supabase_db.table("workspaces").update({
+                            "access_token": "",
+                            "is_paused": True,
+                            "paused_reason": "token_revoked"
+                        }).eq("id", workspace_uuid).execute()
+                    except Exception as e:
+                        print(f"[Worker] Failed to pause workspace after 401: {e}")
+                    failed_count += 1
+                    failed_names.append(f"{subitem_name} (token revoked)")
+                    break
+
                 failed_count += 1
                 failed_names.append(subitem_name)
                 print(f"[Worker]   ✗ '{subitem_name}' — {result['error']}")

@@ -8,6 +8,7 @@
 # ─────────────────────────────────────────────────────────────
 
 import httpx
+import asyncio
 from app.core.config import settings
 
 MONDAY_API_URL = settings.monday_api_url
@@ -83,40 +84,59 @@ async def create_subitem(
       }
     }
     """
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.post(
-                MONDAY_API_URL,
-                json={
-                    "query":     mutation,
-                    "variables": {
-                        "parentId": str(parent_item_id),
-                        "name":     subitem_name,
+    
+    retry_delays = [1, 4, 16]
+    attempt = 0
+    
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(
+                    MONDAY_API_URL,
+                    json={
+                        "query":     mutation,
+                        "variables": {
+                            "parentId": str(parent_item_id),
+                            "name":     subitem_name,
+                        },
                     },
-                },
-                headers={
-                    "Authorization": access_token,
-                    "Content-Type":  "application/json",
-                    "API-Version":   "2024-01",
-                },
-            )
+                    headers={
+                        "Authorization": access_token,
+                        "Content-Type":  "application/json",
+                        "API-Version":   "2024-01",
+                    },
+                )
 
-        if response.status_code != 200:
-            return {"success": False, "error": f"HTTP {response.status_code}"}
+            # Check for rate limiting or server errors to retry
+            if response.status_code == 429 or response.status_code >= 500:
+                if attempt < len(retry_delays):
+                    await asyncio.sleep(retry_delays[attempt])
+                    attempt += 1
+                    continue
+                else:
+                    return {"success": False, "error": f"HTTP {response.status_code} after retries"}
 
-        data = response.json()
+            if response.status_code != 200:
+                return {"success": False, "error": f"HTTP {response.status_code}"}
 
-        if "errors" in data:
-            return {"success": False, "error": str(data["errors"])}
+            data = response.json()
 
-        subitem_id = data.get("data", {}).get("create_subitem", {}).get("id")
-        if not subitem_id:
-            return {"success": False, "error": "No subitem ID returned"}
+            if "errors" in data:
+                return {"success": False, "error": str(data["errors"])}
 
-        return {"success": True, "subitem_id": subitem_id}
+            subitem_id = data.get("data", {}).get("create_subitem", {}).get("id")
+            if not subitem_id:
+                return {"success": False, "error": "No subitem ID returned"}
 
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+            return {"success": True, "subitem_id": subitem_id}
+
+        except Exception as e:
+            if attempt < len(retry_delays):
+                await asyncio.sleep(retry_delays[attempt])
+                attempt += 1
+                continue
+            else:
+                return {"success": False, "error": str(e)}
 
 async def get_item_subitems(item_id: int, access_token: str) -> list[str]:
     """Fetch subitems of an item to check for manual additions."""
