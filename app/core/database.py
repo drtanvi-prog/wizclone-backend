@@ -25,9 +25,12 @@ from app.core.config import settings
 # ── Single shared admin client ──
 # Service role key bypasses Row Level Security (RLS)
 # Used for all backend operations
+db_url = settings.supabase_url if settings.supabase_url else "https://dummy.supabase.co"
+db_key = settings.supabase_service_role_key if settings.supabase_service_role_key else "dummy_key"
+
 db: Client = create_client(
-    settings.supabase_url,
-    settings.supabase_service_role_key,
+    db_url,
+    db_key,
 )
 
 
