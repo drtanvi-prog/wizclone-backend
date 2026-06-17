@@ -5,32 +5,31 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # ── Supabase ──
-    supabase_url:              str
-    supabase_anon_key:         str
-    supabase_service_role_key: str
+    supabase_url:              str = ""
+    supabase_anon_key:         str = ""
+    supabase_service_role_key: str = ""
 
-    database_url:              str
+    database_url:              str = ""
 
     # ── monday.com ──
-    monday_client_id:      str
-    monday_client_secret:  str       # Used to verify session tokens (JWT secret)
-    monday_signing_secret: str       # Used to verify webhook HMAC signatures
-    app_id:                int
+    monday_client_id:      str = ""
+    monday_client_secret:  str = ""      # Used to verify session tokens (JWT secret)
+    monday_signing_secret: str = ""      # Used to verify webhook HMAC signatures
+    app_id:                int = 0
 
     # ── App ──
-    app_env:      str   # "development" | "production"
-    app_port:     int
-    app_base_url: str   # e.g. https://g4j5rg19-8000.inc1.devtunnels.ms — used to build webhook URLs
+    app_env:      str = "development"   # "development" | "production"
+    app_port:     int = 8080
+    app_base_url: str = ""   # e.g. https://g4j5rg19-8000.inc1.devtunnels.ms — used to build webhook URLs
     
     # ── AI Matching ──
-    groq_api_key: Optional[str] = None
-    deepseek_api_key: Optional[str] = None
+    monday_models_api_url: str = "https://api.monday.com/platform-ai-gateway/openai/v1"
 
     # ── monday.com OAuth endpoints ──
-    monday_authorize_url: str    # "https://auth.monday.com/oauth2/authorize"
-    monday_token_url:     str    # "https://auth.monday.com/oauth2/token"
+    monday_authorize_url: str = "https://auth.monday.com/oauth2/authorize"
+    monday_token_url:     str = "https://auth.monday.com/oauth2/token"
 
-    monday_api_url:        str       # https://api.monday.com/v2
+    monday_api_url:       str = "https://api.monday.com/v2"
 
     model_config = SettingsConfigDict(
         env_file          = ".env",

@@ -450,9 +450,12 @@ async def generate_template(
     """
     workspace_uuid = get_workspace_uuid_for_request(request, workspaceId, db)
 
+    ws_res = db.table("workspaces").select("access_token").eq("id", workspace_uuid).execute()
+    access_token = ws_res.data[0].get("access_token", "") if ws_res.data else ""
+
     # Run AI generation
     from app.services.matching_services import generate_template_from_ai
-    result = await generate_template_from_ai(body.prompt)
+    result = await generate_template_from_ai(body.prompt, access_token)
     
     if result:
         return {
