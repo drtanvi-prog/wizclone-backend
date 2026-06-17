@@ -310,7 +310,7 @@ async def save_settings(
         # Fetch ALL boards that have a webhook_id (regardless of is_enabled)
         try:
             all_boards_result = db.table("monitored_boards") \
-                .select("board_id, webhook_id") \
+                .select("id, board_id, webhook_id") \
                 .eq("workspace_id", workspace_uuid) \
                 .is_("deleted_at",  "null") \
                 .execute()
@@ -339,8 +339,7 @@ async def save_settings(
                         "webhook_id":     None,
                         "webhook_status": "DISABLED",
                     }) \
-                    .eq("workspace_id", workspace_uuid) \
-                    .eq("board_id",     board["board_id"]) \
+                    .eq("id", board["id"]) \
                     .execute()
             except Exception as e:
                 print(f"[save] DB disable failed for board {board['board_id']}: {e}")
@@ -402,8 +401,7 @@ async def save_settings(
                                 "board_name":     board.board_name,
                                 "deleted_at":     None,
                             }) \
-                            .eq("workspace_id", workspace_uuid) \
-                            .eq("board_id",     board.board_id) \
+                            .eq("id", existing["id"]) \
                             .execute()
                     except Exception as e:
                         print(f"[save] DB update failed for board {board.board_id}: {e}")
@@ -434,8 +432,7 @@ async def save_settings(
                         if existing:
                             db.table("monitored_boards") \
                                 .update(row) \
-                                .eq("workspace_id", workspace_uuid) \
-                                .eq("board_id",     board.board_id) \
+                                .eq("id", existing["id"]) \
                                 .execute()
                         else:
                             db.table("monitored_boards").insert(row).execute()
@@ -466,8 +463,7 @@ async def save_settings(
                     if existing:
                         db.table("monitored_boards") \
                             .update(row) \
-                            .eq("workspace_id", workspace_uuid) \
-                            .eq("board_id",     board.board_id) \
+                            .eq("id", existing["id"]) \
                             .execute()
                     else:
                         # Insert the board if the user checked it (even if global automation is off)
