@@ -264,6 +264,9 @@ async def save_settings(
         ws_update["ai_sensitivity"] = body.sensitivity.upper()
     if body.automation_enabled is not None:
         ws_update["is_enabled"] = body.automation_enabled
+    if body.template_board_id is not None:
+        ws_update["template_board_id"] = body.template_board_id
+        ws_update["template_board_deleted"] = False
 
     if ws_update:
         try:

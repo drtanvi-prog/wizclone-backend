@@ -74,3 +74,4 @@ class SettingsSaveRequest(BaseModel):
     sensitivity: Optional[str] = None
     automation_enabled: Optional[bool] = None
     boards: Optional[List[BoardSetting]] = None
+    template_board_id: Optional[int] = None
