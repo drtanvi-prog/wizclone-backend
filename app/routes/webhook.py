@@ -79,7 +79,7 @@ def _is_plan_limit_reached(workspace_uuid: str, plan_tier: str) -> bool:
 
 @router.post("/webhook/monday/{workspace_id}")
 async def receive_webhook(request: Request, workspace_id: str):
-
+    print(f"[Webhook] POST /webhook/monday/{workspace_id} - Incoming request")
     body = await request.body()
 
     # ── Step 1: Verify signature ──

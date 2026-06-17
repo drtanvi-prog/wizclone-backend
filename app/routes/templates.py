@@ -39,6 +39,7 @@ async def create_template(
     body:        TemplateCreateRequest,
     db:          Client = Depends(get_db),
 ):
+    print(f"[Templates] POST /templates/{workspaceId} - Creating template: {body.name}")
     """
     Create a new template with subitems.
 
@@ -141,10 +142,12 @@ async def list_templates(
     # ── Pagination ──
     page:    int           = Query(default=1,  ge=1,          description="Page number (1-based)"),
     limit:   int           = Query(default=20, ge=1,  le=100, description="Items per page (max 100)"),
+    sort:    Optional[str] = Query(default=None,              description="Sort by created_at|name|usage_count|last_used_at"),
     # ── Search ──
     search:  Optional[str] = Query(default=None,              description="Search by template name"),
     db:      Client        = Depends(get_db),
 ):
+    print(f"[Templates] GET /templates/{workspaceId} - page={page}, limit={limit}")
     """
     Return paginated templates with their subitems.
 
@@ -258,6 +261,7 @@ async def update_template(
     body:        TemplateUpdateRequest,
     db:          Client = Depends(get_db),
 ):
+    print(f"[Templates] PUT /templates/{workspaceId}/{templateId} - Updating template")
     """
     Update template name and/or subitems.
 
@@ -384,6 +388,7 @@ async def delete_template(
     templateId:  str,
     db:          Client = Depends(get_db),
 ):
+    print(f"[Templates] DELETE /templates/{workspaceId}/{templateId} - Deleting template")
     """
     Soft-delete a template and all its subitems.
     Data is kept in DB for audit/history.
@@ -438,6 +443,7 @@ async def generate_template(
     body:        AIRequest,
     db:          Client = Depends(get_db),
 ):
+    print(f"[Templates] POST /generate_template/{workspaceId} - Prompt length: {len(body.prompt)}")
     """
     The Groq AI matching directly!
     Pass any prompt to see which template the AI picks.

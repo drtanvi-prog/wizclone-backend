@@ -60,7 +60,8 @@ router = APIRouter(prefix="/api/auth", tags=["Auth"])
 # which token i want to pass in this url 
 # ═══════════════════════════════════════════════════════════
 @router.get("/authorization")
-async def authorization(token: str = Query(...), db: Client = Depends(get_db)):
+async def authorization(token: str = Query(...), request: Request = None, db: Client = Depends(get_db)):
+    print(f"[Auth] GET /authorization - IP: {request.client.host if request else 'Unknown'}")
     """
     monday.com redirects user here when they install/open your app.
 
@@ -103,9 +104,11 @@ async def authorization(token: str = Query(...), db: Client = Depends(get_db)):
 
     # ── Already authorized → skip OAuth
     if already_authorized:
+        print(f"[Auth] Account {account_id} already authorized. Redirecting to backToUrl.")
         return RedirectResponse(url=back_to_url)
 
     # ── Not authorized → redirect to monday.com OAuth
+    print(f"[Auth] Account {account_id} not authorized. Redirecting to Monday OAuth.")
     # Pass full token as state → we recover backToUrl in callback
     params = urllib.parse.urlencode({
         "client_id":    settings.monday_client_id,
@@ -188,9 +191,11 @@ async def monday_oauth_authorized(
 # ═══════════════════════════════════════════════════════════
 @router.get("/callback")
 async def oauth_callback(
+    request: Request,
     code: str = Query(...),
     db: Client = Depends(get_db)
 ):
+    print(f"[Auth] GET /callback - Received OAuth code")
     """
     OAuth callback WITHOUT state support.
 
@@ -247,6 +252,7 @@ async def oauth_callback(
         raise HTTPException(status_code=500, detail=f"Failed to fetch account_id: {str(e)}")
 
     # ── Step 3: Save to DB
+    print(f"[Auth] Fetched account_id: {account_id}. Saving to DB...")
     try:
         db.table("workspaces").upsert(
             {
@@ -292,6 +298,7 @@ async def oauth_callback(
 # ═══════════════════════════════════════════════════════════
 @router.post("/verify", response_model=VerifyResponse)
 async def verify_auth(payload: VerifyRequest, request: Request, db: Client = Depends(get_db)):
+    print(f"[Auth] POST /verify - Payload: accountId={payload.accountId}, workspaceId={payload.workspaceId}")
     """
     Called on every app load by frontend.
 

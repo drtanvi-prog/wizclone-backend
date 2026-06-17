@@ -56,6 +56,7 @@ async def load_settings(
     body:    SettingsLoadRequest,
     db:      Client = Depends(get_db),
 ):
+    print(f"[Settings] POST /load - workspaceId: {body.workspaceId}, accountId: {body.accountId}")
     import time
     t_start = time.time()
     print(f"\n[load] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -189,14 +190,29 @@ async def load_settings(
     except Exception:
         final_boards = []
 
-    boards = [
-        BoardSetting(
-            board_id      = row["board_id"],
-            board_name    = row["board_name"],
-            board_enabled = row.get("is_enabled", False),
-        )
-        for row in final_boards
-    ]
+    boards = []
+    if 'monday_boards' in locals():
+        for mb in monday_boards:
+            board_id_str = str(mb["id"])
+            is_enabled = False
+            if board_id_str in db_board_map:
+                is_enabled = db_board_map[board_id_str].get("is_enabled", False)
+            boards.append(
+                BoardSetting(
+                    board_id      = int(mb["id"]),
+                    board_name    = mb["name"],
+                    board_enabled = is_enabled,
+                )
+            )
+    else:
+        boards = [
+            BoardSetting(
+                board_id      = row["board_id"],
+                board_name    = row["board_name"],
+                board_enabled = row.get("is_enabled", False),
+            )
+            for row in final_boards
+        ]
 
     print(f"[load] Returning {len(boards)} boards to frontend.")
     t_end = time.time()
@@ -204,11 +220,12 @@ async def load_settings(
     print(f"[load] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 
     return SettingsResponse(
-        workspace_id       = str(body.workspaceId),
-        boards             = boards,
-        sensitivity        = ws_data.get("ai_sensitivity", "BALANCED"),
-        automation_enabled = ws_data.get("is_enabled", True),
+        workspace_id           = str(body.workspaceId),
+        boards                 = boards,
+        sensitivity            = ws_data.get("ai_sensitivity", "BALANCED"),
+        automation_enabled     = ws_data.get("is_enabled", True),
         template_board_deleted = ws_data.get("template_board_deleted", False),
+        template_board_id      = ws_data.get("template_board_id"),
     )
 
 
@@ -517,6 +534,7 @@ async def delete_monitored_board(
     boardId:     int,
     db:          Client = Depends(get_db),
 ):
+    print(f"[Settings] DELETE /boards - workspaceId: {workspaceId}, boardId: {boardId}")
     """
     Deletes a monitored board (triggered by the trash icon).
     Removes the webhook from monday.com and soft deletes it from the DB.

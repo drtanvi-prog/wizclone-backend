@@ -47,6 +47,7 @@ async def get_activity_log(
     limit:   int           = Query(default=20, ge=1, le=100),
     db:      Client        = Depends(get_db),
 ):
+    print(f"[ActivityLog] GET /{workspaceId} - page={page}, status={status}, search={search}")
     """
     Returns paginated activity log for the workspace.
 
