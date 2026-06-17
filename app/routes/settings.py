@@ -56,7 +56,7 @@ async def load_settings(
     body:    SettingsLoadRequest,
     db:      Client = Depends(get_db),
 ):
-    print(f"[Settings] POST /load - workspaceId: {body.workspaceId}, accountId: {body.accountId}")
+    print(f"[Settings] POST /load - workspaceId: {body.workspaceId}")
     import time
     t_start = time.time()
     print(f"\n[load] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
