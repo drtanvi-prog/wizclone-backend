@@ -108,18 +108,6 @@ class SessionTokenMiddleware(BaseHTTPMiddleware):
         # Attach decoded token to request state
         # Access in routes via: request.state.token_data
         request.state.token_data = decoded.get("dat", {})
-        
-        # Globally fetch the plan_tier and attach to request
-        account_id = request.state.token_data.get("account_id")
-        plan_tier = None
-        if account_id:
-            try:
-                ws_res = db.table("workspaces").select("plan_tier").eq("monday_account_id", int(account_id)).single().execute()
-                plan_tier = ws_res.data.get("plan_tier") if ws_res.data else None
-            except Exception:
-                pass
-        
-        request.state.plan_tier = plan_tier
 
         return await call_next(request)
 

@@ -51,7 +51,6 @@ class SettingsResponse(BaseModel):
     automation_enabled: bool = True
     template_board_deleted: bool = False
     template_board_id: Optional[int] = None
-    plan_tier: Optional[str] = None
 
 
 # ─────────────────────────────────────────

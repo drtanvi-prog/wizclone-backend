@@ -38,3 +38,4 @@ class VerifyResponse(BaseModel):
     workspace_id: Optional[int]  = None
     user_id:      Optional[int]  = None
     is_admin:       Optional[bool] = None
+    plan_tier:      Optional[str]  = None

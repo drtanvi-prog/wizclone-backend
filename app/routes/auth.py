@@ -344,7 +344,7 @@ async def verify_auth(payload: VerifyRequest, request: Request, db: Client = Dep
     workspace = None
     try:
         ws_result = db.table("workspaces") \
-            .select("id, access_token, monday_workspace_id") \
+            .select("id, access_token, monday_workspace_id, plan_tier") \
             .eq("monday_account_id", int(account_id)) \
             .execute()
         workspace = ws_result.data[0] if ws_result.data else None
@@ -379,7 +379,7 @@ async def verify_auth(payload: VerifyRequest, request: Request, db: Client = Dep
             # Unique constraint hit (race condition) — row was just created, fetch it
             try:
                 ws_result = db.table("workspaces") \
-                    .select("id, access_token, monday_workspace_id") \
+                    .select("id, access_token, monday_workspace_id, plan_tier") \
                     .eq("monday_account_id", int(account_id)) \
                     .execute()
                 workspace = ws_result.data[0] if ws_result.data else None
@@ -409,9 +409,10 @@ async def verify_auth(payload: VerifyRequest, request: Request, db: Client = Dep
         message        = "Token verified",
         has_oauth      = has_oauth,
         workspace_uuid = workspace_uuid,
-        workspace_id   = payload.workspaceId,
+        workspace_id   = int(payload.workspaceId) if payload.workspaceId else None,
         user_id        = int(user_id) if user_id else None,
         is_admin       = is_admin,
+        plan_tier      = workspace.get("plan_tier"),
     )
 
 
