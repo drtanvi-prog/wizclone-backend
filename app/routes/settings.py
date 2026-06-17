@@ -190,29 +190,14 @@ async def load_settings(
     except Exception:
         final_boards = []
 
-    boards = []
-    if 'monday_boards' in locals():
-        for mb in monday_boards:
-            board_id_str = str(mb["id"])
-            is_enabled = False
-            if board_id_str in db_board_map:
-                is_enabled = db_board_map[board_id_str].get("is_enabled", False)
-            boards.append(
-                BoardSetting(
-                    board_id      = int(mb["id"]),
-                    board_name    = mb["name"],
-                    board_enabled = is_enabled,
-                )
-            )
-    else:
-        boards = [
-            BoardSetting(
-                board_id      = row["board_id"],
-                board_name    = row["board_name"],
-                board_enabled = row.get("is_enabled", False),
-            )
-            for row in final_boards
-        ]
+    boards = [
+        BoardSetting(
+            board_id      = row["board_id"],
+            board_name    = row["board_name"],
+            board_enabled = row.get("is_enabled", False),
+        )
+        for row in final_boards
+    ]
 
     print(f"[load] Returning {len(boards)} boards to frontend.")
     t_end = time.time()
