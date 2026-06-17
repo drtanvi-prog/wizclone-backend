@@ -445,8 +445,8 @@ async def generate_template(
 ):
     print(f"[Templates] POST /generate_template/{workspaceId} - Prompt length: {len(body.prompt)}")
     """
-    The Groq AI matching directly!
-    Pass any prompt to see which template the AI picks.
+    The monday.com Models API template generator.
+    Pass any prompt to generate a categorized template structure.
     """
     workspace_uuid = get_workspace_uuid_for_request(request, workspaceId, db)
 

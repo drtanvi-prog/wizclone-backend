@@ -90,6 +90,7 @@ async def load_settings(
 
     workspace_uuid = workspace["id"]
     access_token   = workspace["access_token"]
+    plan_tier      = getattr(request.state, "plan_tier", None)
 
     try:
         ws_result = db.table("workspace_settings") \
@@ -211,6 +212,7 @@ async def load_settings(
         automation_enabled     = ws_data.get("is_enabled", True),
         template_board_deleted = ws_data.get("template_board_deleted", False),
         template_board_id      = ws_data.get("template_board_id"),
+        plan_tier              = plan_tier,
     )
 
 
