@@ -34,7 +34,11 @@ import traceback
 from datetime import datetime, timezone, timedelta
 
 from app.core.database   import db as supabase_db
-from app.services.monday_services   import create_subitem, get_item_subitems
+from app.services.monday_services import (
+    create_subitem,
+    create_subitems_batch,
+    get_item_subitems,
+)
 from app.services.matching_services  import match_item_to_template
 
 # How often the worker polls queue_jobs (seconds)
@@ -244,41 +248,29 @@ async def process_job(job: dict):
         for idx, sub in enumerate(subitems):
             print(f"  {idx+1}. {sub.get('name', '')} (order: {sub.get('sort_order', '')})")
 
-        # ── Step 8: C-05 — Create each subitem on monday.com ──
-        copied_count = 0
-        failed_count = 0
-        failed_names = []
+        # ── Step 8: C-05 — Create subitems on monday.com (BATCHED) ──
+        print(f"[Worker] Commencing batched monday.com copy process...")
+        valid_subitem_names = [sub.get("name", "").strip() for sub in subitems if sub.get("name", "").strip()]
+        
+        batch_result = await create_subitems_batch(item_id, valid_subitem_names, access_token)
+        
+        copied_count = batch_result["copied_count"]
+        failed_count = batch_result["failed_count"]
+        failed_names = batch_result["failed_names"]
 
-        print(f"[Worker] Commencing monday.com copy process...")
-        for subitem in subitems:
-            subitem_name = subitem.get("name", "").strip()
-            if not subitem_name:
-                continue
+        if batch_result.get("token_revoked"):
+            print(f"[Worker] Token revoked! Disabling workspace {workspace_uuid}")
+            try:
+                supabase_db.table("workspace_settings").update({"is_enabled": False}).eq("workspace_id", workspace_uuid).execute()
+                supabase_db.table("workspaces").update({
+                    "access_token": "",
+                    "is_paused": True,
+                    "paused_reason": "token_revoked"
+                }).eq("id", workspace_uuid).execute()
+            except Exception as e:
+                print(f"[Worker] Failed to pause workspace after 401: {e}")
 
-            result = await create_subitem(item_id, subitem_name, access_token)
-
-            if result["success"]:
-                copied_count += 1
-                print(f"[Worker]   ✓ '{subitem_name}'")
-            else:
-                if "401" in result["error"]:
-                    print(f"[Worker] Token revoked! Disabling workspace {workspace_uuid}")
-                    try:
-                        supabase_db.table("workspace_settings").update({"is_enabled": False}).eq("workspace_id", workspace_uuid).execute()
-                        supabase_db.table("workspaces").update({
-                            "access_token": "",
-                            "is_paused": True,
-                            "paused_reason": "token_revoked"
-                        }).eq("id", workspace_uuid).execute()
-                    except Exception as e:
-                        print(f"[Worker] Failed to pause workspace after 401: {e}")
-                    failed_count += 1
-                    failed_names.append(f"{subitem_name} (token revoked)")
-                    break
-
-                failed_count += 1
-                failed_names.append(subitem_name)
-                print(f"[Worker]   ✗ '{subitem_name}' — {result['error']}")
+        print(f"[Worker] Batched creation complete: {copied_count} copied, {failed_count} failed")
 
         # ── Determine final status ──
         if   failed_count == 0:   final_status = "SUCCESS"

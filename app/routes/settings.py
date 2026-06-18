@@ -46,6 +46,20 @@ from app.services.settings import (
 
 router = APIRouter(prefix="/api/settings", tags=["Settings"])
 
+def _log_audit(db: Client, workspace_id: str, account_id: int, action: str, details: str):
+    """Helper to silently record audit logs (requires 'audit_logs' table to be created in Supabase)"""
+    try:
+        db.table("audit_logs").insert({
+            "workspace_id": workspace_id,
+            "account_id": account_id,
+            "action": action,
+            "details": details,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }).execute()
+    except Exception as e:
+        print(f"[Audit Log Skipped] Table missing or error: {e}")
+
+
 
 # ─────────────────────────────────────────
 # POST /api/settings/load
@@ -434,8 +448,10 @@ async def save_settings(
                                 .update(row) \
                                 .eq("id", existing["id"]) \
                                 .execute()
+                            _log_audit(db, workspace_uuid, int(account_id) if account_id else 0, "BOARD_RE_ENABLED", f"Board {board.board_id} re-enabled")
                         else:
                             db.table("monitored_boards").insert(row).execute()
+                            _log_audit(db, workspace_uuid, int(account_id) if account_id else 0, "BOARD_ENABLED", f"Board {board.board_id} initially enabled")
                     except Exception as e:
                         print(f"[save] DB save failed for board {board.board_id}: {e}")
 
@@ -465,6 +481,8 @@ async def save_settings(
                             .update(row) \
                             .eq("id", existing["id"]) \
                             .execute()
+                        if not board.board_enabled:
+                            _log_audit(db, workspace_uuid, int(account_id) if account_id else 0, "BOARD_DISABLED", f"Board {board.board_id} disabled")
                     else:
                         # Insert the board if the user checked it (even if global automation is off)
                         if board.board_enabled:
@@ -473,6 +491,7 @@ async def save_settings(
                             row["board_name"]     = board.board_name
                             row["is_active"]      = True
                             db.table("monitored_boards").insert(row).execute()
+                            _log_audit(db, workspace_uuid, int(account_id) if account_id else 0, "BOARD_ENABLED", f"Board {board.board_id} enabled with automation globally off")
                 except Exception as e:
                     print(f"[save] DB update failed for board {board.board_id}: {e}")
 
@@ -545,9 +564,10 @@ async def delete_monitored_board(
 
     # 2. Delete webhook from monday.com if it exists
     webhook_id = board.get("webhook_id")
+    webhook_deleted = False
     if webhook_id:
         try:
-            await delete_webhook(access_token, webhook_id)
+            webhook_deleted = await delete_webhook(access_token, webhook_id)
         except Exception as e:
             print(f"[delete board] delete_webhook failed: {e}")
             
@@ -566,4 +586,8 @@ async def delete_monitored_board(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete board from DB: {e}")
 
-    return {"success": True, "message": "Board successfully removed from monitored list"}
+    return {
+        "success": True, 
+        "message": "Board successfully removed from monitored list",
+        "monday_webhook_deleted": webhook_deleted
+    }
