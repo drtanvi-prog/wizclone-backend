@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     
     # ── AI Matching ──
     monday_models_api_url: str = "https://api.monday.com/platform-ai-gateway/openai/v1"
+    groq_api_key:          str = ""
+    deepseek_api_key:      str = ""
 
     # ── monday.com OAuth endpoints ──
     monday_authorize_url: str = "https://auth.monday.com/oauth2/authorize"

@@ -192,17 +192,97 @@ USE_AI_MATCHING = True
 #     return None
 
 
+async def _call_ai_providers(messages: list[dict], max_tokens: int, access_token: str):
+    """
+    Calls Monday AI first. If it fails, falls back to Groq. If Groq fails, falls back to DeepSeek.
+    Returns the successful httpx.Response object or None if all fail.
+    """
+    from app.core.config import settings
+    import httpx
+
+    # 1. Try Monday AI (Primary)
+    if access_token and access_token not in ["", "test-token"]:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(
+                    f"{settings.monday_models_api_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Content-Type":  "application/json",
+                    },
+                    json={
+                        "model":      "monday-standard",
+                        "messages":   messages,
+                        "max_tokens": max_tokens,
+                    },
+                )
+                if response.status_code == 200:
+                    print(f"[AI] Monday AI generated successfully.")
+                    return response
+                else:
+                    print(f"[AI] Monday AI failed with {response.status_code}: {response.text}. Falling back to Groq...")
+        except Exception as e:
+            print(f"[AI] Monday AI exception: {e}. Falling back to Groq...")
+    else:
+        print("[AI] No valid access_token for Monday AI. Skipping to Groq...")
+
+    # 2. Try Groq (Fallback 1)
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.groq_api_key}",
+                    "Content-Type":  "application/json",
+                },
+                json={
+                    "model":      "llama-3.1-8b-instant",
+                    "messages":   messages,
+                    "max_tokens": max_tokens,
+                },
+            )
+            if response.status_code == 200:
+                print(f"[AI] Groq generated successfully.")
+                return response
+            else:
+                print(f"[AI] Groq failed with {response.status_code}: {response.text}. Falling back to DeepSeek...")
+    except Exception as e:
+        print(f"[AI] Groq exception: {e}. Falling back to DeepSeek...")
+
+    # 3. Try DeepSeek (Fallback 2)
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.post(
+                "https://api.deepseek.com/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.deepseek_api_key}",
+                    "Content-Type":  "application/json",
+                },
+                json={
+                    "model":      "deepseek-chat",
+                    "messages":   messages,
+                    "max_tokens": max_tokens,
+                },
+            )
+            if response.status_code == 200:
+                print(f"[AI] DeepSeek generated successfully.")
+                return response
+            else:
+                print(f"[AI] DeepSeek failed with {response.status_code}: {response.text}.")
+                return None
+    except Exception as e:
+        print(f"[AI] DeepSeek exception: {e}")
+        return None
+
+
 async def _ai_semantic_match(
     item_name:      str,
     template_names: list[str],
     access_token:   str,
 ) -> dict | None:
     """
-    monday.com Models API Matching Engine
+    AI Semantic Match using Groq / DeepSeek
     """
-    from app.core.config import settings
-    import httpx
-
     # Build candidate list for the prompt
     candidates = "\n".join(f"- {name}" for name in template_names)
 
@@ -218,64 +298,48 @@ async def _ai_semantic_match(
         f"Example: New Client Onboarding | 87"
     )
 
+    response = await _call_ai_providers([{"role": "user", "content": prompt}], 50, access_token)
+    
+    if not response:
+        print("[matching] AI Providers failed — using difflib")
+        return None
+
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.post(
-                f"{settings.monday_models_api_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Content-Type":  "application/json",
-                },
-                json={
-                    "model":      "monday-standard",
-                    "messages":   [{"role": "user", "content": prompt}],
-                    "max_tokens": 50,
-                },
-            )
-
-        if response.status_code != 200:
-            print(f"[matching] Models API {response.status_code} error — using difflib")
-            return None
-
         # Parse response — expected: "Template Name | 87"
         text  = response.json()["choices"][0]["message"]["content"].strip()
         parts = text.split("|")
 
         if len(parts) != 2:
-            print(f"[matching] Models API bad format: {text} — using difflib")
+            print(f"[matching] AI API bad format: {text} — using difflib")
             return None
 
         matched_name = parts[0].strip()
         confidence   = float(parts[1].strip())
 
         # Safety: AI must return a name that exists in our template list
-        # Prevents hallucinated template names from being accepted
         if matched_name not in template_names:
-            print(f"[matching] Models API returned unknown template '{matched_name}' — using difflib")
+            print(f"[matching] AI returned unknown template '{matched_name}' — using difflib")
             return None
 
-        print(f"[matching] Models API: '{matched_name}' at {confidence}%")
+        print(f"[matching] AI Match: '{matched_name}' at {confidence}%")
 
         return {
             "matched_name": matched_name,
             "confidence":   confidence,
-            "method":       "AI",    # saved to automation_events.match_method
-            "ai_used":      True,    # ai_fallback_used = False in DB
+            "method":       "AI",
+            "ai_used":      True,
         }
 
     except Exception as e:
-        print(f"[matching] Models API error: {e} — using difflib")
+        print(f"[matching] AI parsing error: {e} — using difflib")
         return None
 
 
 async def generate_template_from_ai(prompt: str, access_token: str) -> dict | None:
     """
-    Pure AI Generator for the frontend using monday.com Models API.
+    Pure AI Generator for the frontend using Groq / DeepSeek.
     Generates a template name and subitems based on the prompt without looking at DB templates.
     """
-    from app.core.config import settings
-    import httpx
-
     ai_prompt = (
         f"You are an intelligent task management assistant.\n"
         f"Given a user prompt/item name, generate a categorized 'Template Name' "
@@ -294,47 +358,33 @@ async def generate_template_from_ai(prompt: str, access_token: str) -> dict | No
         f"- Launch ads"
     )
 
+    response = await _call_ai_providers([{"role": "user", "content": ai_prompt}], 150, access_token)
+
+    if not response:
+        return None
+
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.post(
-                f"{settings.monday_models_api_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Content-Type":  "application/json",
-                },
-                json={
-                    "model":      "monday-standard",
-                    "messages":   [{"role": "user", "content": ai_prompt}],
-                    "max_tokens": 150,
-                },
-            )
-            
-        if response.status_code == 200:
-            text = response.json()["choices"][0]["message"]["content"].strip()
-            lines = [line.strip() for line in text.split("\n") if line.strip()]
+        text = response.json()["choices"][0]["message"]["content"].strip()
+        lines = [line.strip() for line in text.split("\n") if line.strip()]
 
-            if not lines:
-                return None
-
-            # First line is Template Name
-            suggested_name = lines[0].strip()
-            
-            # Following lines with '-' are subitems
-            ai_subitems = []
-            for line in lines[1:]:
-                if line.startswith("-"):
-                    ai_subitems.append(line.lstrip("- ").strip())
-
-            return {
-                "template_name": suggested_name,
-                "subitems": ai_subitems,
-            }
-        else:
-            print(f"[generate] Models API {response.status_code} error.")
+        if not lines:
             return None
 
+        # First line is Template Name
+        suggested_name = lines[0].strip()
+        
+        # Following lines with '-' are subitems
+        ai_subitems = []
+        for line in lines[1:]:
+            if line.startswith("-"):
+                ai_subitems.append(line.lstrip("- ").strip())
+
+        return {
+            "template_name": suggested_name,
+            "subitems": ai_subitems,
+        }
     except Exception as e:
-        print(f"[generate] Models API exception: {e}")
+        print(f"[generate] AI parsing exception: {e}")
         return None
 
 
