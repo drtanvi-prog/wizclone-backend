@@ -115,6 +115,7 @@ async def authorization(token: str = Query(...), request: Request = None, db: Cl
         "redirect_uri": f"{settings.app_base_url}/api/auth/callback",
         "scope":        "boards:read boards:write webhooks:read webhooks:write workspaces:read",
         "state":        token,   # full token passed as state
+        "account_id":   account_id,
     })
 
     return RedirectResponse(
