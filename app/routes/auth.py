@@ -38,6 +38,7 @@
 import jwt
 import httpx
 import urllib.parse
+from datetime import datetime, timezone, timedelta
 from fastapi           import APIRouter, HTTPException, Query, Depends, Request
 from fastapi.responses import RedirectResponse, HTMLResponse
 
@@ -53,6 +54,70 @@ from app.schemas.auth  import (
 )
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
+
+
+async def _sync_subscription(workspace_uuid: str, access_token: str, db: Client) -> str:
+    """
+    Fetch the subscription status from monday.com and sync it to the workspaces and
+    workspace_subscriptions tables. Returns the resolved plan_tier.
+    """
+    plan_tier = "FREE"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            res = await client.post(
+                "https://api.monday.com/v2",
+                json={
+                    "query": "query { app_subscription { plan_id is_trial billing_period days_left } }"
+                },
+                headers={
+                    "Authorization": access_token,
+                    "Content-Type": "application/json"
+                },
+            )
+        if res.status_code == 200:
+            data = res.json()
+            app_sub = data.get("data", {}).get("app_subscription")
+            if app_sub and app_sub.get("plan_id"):
+                plan_id_upper = app_sub["plan_id"].upper()
+                if "PRO" in plan_id_upper or "BUSINESS" in plan_id_upper or "ENTERPRISE" in plan_id_upper:
+                    plan_tier = "PRO"
+                else:
+                    plan_tier = plan_id_upper
+
+                # Update the workspace with correct plan tier
+                db.table("workspaces").update({"plan_tier": plan_tier}).eq("id", workspace_uuid).execute()
+
+                # Sync to workspace_subscriptions table
+                is_trial = app_sub.get("is_trial", False)
+                days_left = app_sub.get("days_left", 0) or 0
+                
+                # Estimate current_period_end
+                now = datetime.now(timezone.utc)
+                current_period_end = (now + timedelta(days=days_left)).isoformat()
+                
+                upsert_data = {
+                    "workspace_id": workspace_uuid,
+                    "plan_id": app_sub["plan_id"],
+                    "billing_status": "ACTIVE" if not is_trial else "TRIAL",
+                    "current_period_start": now.isoformat(),
+                    "current_period_end": current_period_end,
+                    "is_active": True,
+                    "updated_at": now.isoformat()
+                }
+                
+                existing_sub = db.table("workspace_subscriptions").select("id").eq("workspace_id", workspace_uuid).execute()
+                if existing_sub.data:
+                    db.table("workspace_subscriptions").update(upsert_data).eq("id", existing_sub.data[0]["id"]).execute()
+                else:
+                    db.table("workspace_subscriptions").insert(upsert_data).execute()
+            else:
+                # If app_subscription is None, make sure we default to FREE and active subscription is inactive
+                db.table("workspaces").update({"plan_tier": "FREE"}).eq("id", workspace_uuid).execute()
+                db.table("workspace_subscriptions").update({"is_active": False}).eq("workspace_id", workspace_uuid).execute()
+                
+    except Exception as e:
+        print(f"[Auth] Failed to sync subscription: {e}")
+    return plan_tier
 
 # ═══════════════════════════════════════════════════════════
 # URL 1 — GET /api/auth/authorization
@@ -170,7 +235,7 @@ async def monday_oauth_authorized(
     account_id = res.json()["data"]["me"]["account"]["id"]
 
     # Save to DB
-    db.table("workspaces").upsert(
+    res_db = db.table("workspaces").upsert(
         {
             "monday_account_id":   int(account_id),
             "monday_workspace_id": None,
@@ -183,6 +248,10 @@ async def monday_oauth_authorized(
         },
         on_conflict="monday_account_id",
     ).execute()
+
+    if res_db.data:
+        workspace_uuid = res_db.data[0]["id"]
+        await _sync_subscription(workspace_uuid, access_token, db)
 
     print("Token saved for account:", account_id)
     return {"status": "ok"}
@@ -255,7 +324,7 @@ async def oauth_callback(
     # ── Step 3: Save to DB
     print(f"[Auth] Fetched account_id: {account_id}. Saving to DB...")
     try:
-        db.table("workspaces").upsert(
+        res_db = db.table("workspaces").upsert(
             {
                 "monday_account_id": int(account_id),
                 "monday_workspace_id": None,
@@ -268,6 +337,10 @@ async def oauth_callback(
             },
             on_conflict="monday_account_id",
         ).execute()
+
+        if res_db.data:
+            workspace_uuid = res_db.data[0]["id"]
+            await _sync_subscription(workspace_uuid, access_token, db)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"DB save failed: {str(e)}")

@@ -184,12 +184,23 @@ async def list_templates(
         if offset >= total and total > 0:
             templates = []
         else:
+            # Handle sorting
+            sort_column = "created_at"
+            sort_desc = False
+            if sort:
+                clean_sort = sort.strip()
+                if clean_sort.startswith("-"):
+                    sort_desc = True
+                    clean_sort = clean_sort.lstrip("-")
+                if clean_sort in ["created_at", "name", "usage_count", "last_used_at"]:
+                    sort_column = clean_sort
+
             data_query = db.table("templates") \
                 .select("id, name, usage_count, created_at") \
                 .eq("workspace_id", workspace_uuid) \
                 .eq("is_deleted",   False) \
                 .eq("is_active",    True) \
-                .order("created_at", desc=False) \
+                .order(sort_column, desc=sort_desc) \
                 .range(offset, offset + limit - 1)
 
             if search and search.strip():

@@ -133,28 +133,28 @@ async def process_job(job: dict):
         if usage_res.data:
             copies_used = usage_res.data[0].get("copies_used", 0)
             
-        if plan_tier.upper() == "FREE" and copies_used >= 50:
-            print(f"[Worker] Free tier limit reached (50 copies) — skipping job {job_id}")
+        # Dynamically fetch limit from plans table
+        max_copies = None
+        try:
+            plan_res = supabase_db.table("plans") \
+                .select("max_copies_per_month") \
+                .eq("plan_name", plan_tier.upper()) \
+                .single() \
+                .execute()
+            if plan_res.data:
+                max_copies = plan_res.data.get("max_copies_per_month")
+        except Exception as e:
+            print(f"[Worker] Error querying plans table for limit: {e}")
+            
+        if max_copies is not None and copies_used >= max_copies:
+            print(f"[Worker] Plan '{plan_tier}' limit reached ({max_copies} copies) — skipping job {job_id}")
             await _update_event(
                 event_id=automation_event_id, status="FAILED", copied=0, failed=0,
                 template_id=None, template_name=None, confidence=0.0,
                 method="EXACT_MATCH", ai_used=False, processing_ms=_elapsed_ms(start_time), failed_names=[]
             )
             supabase_db.table("automation_events").update({
-                "error_details": "Free plan limit hit (50 copies/month). Please upgrade."
-            }).eq("id", automation_event_id).execute()
-            await _complete_job(job_id)
-            return
-
-        elif plan_tier.upper() == "PRO" and copies_used >= 500:
-            print(f"[Worker] Pro tier limit reached (500 copies) — skipping job {job_id}")
-            await _update_event(
-                event_id=automation_event_id, status="FAILED", copied=0, failed=0,
-                template_id=None, template_name=None, confidence=0.0,
-                method="EXACT_MATCH", ai_used=False, processing_ms=_elapsed_ms(start_time), failed_names=[]
-            )
-            supabase_db.table("automation_events").update({
-                "error_details": "Pro plan limit hit (500 copies/month). Please upgrade."
+                "error_details": f"{plan_tier} plan limit hit ({max_copies} copies/month). Please upgrade."
             }).eq("id", automation_event_id).execute()
             await _complete_job(job_id)
             return
@@ -636,6 +636,123 @@ async def run_billing_cron():
             
         await asyncio.sleep(3600) # Sleep 1 hour
 
+async def run_data_deletion_cron():
+    """
+    Runs every hour to check for workspaces with status='UNINSTALLED'
+    and updated_at <= 10 days ago, and permanently deletes all their data.
+    """
+    print("[Worker] Data deletion cron started. Checking for uninstalled workspaces older than 10 days every hour.")
+    while True:
+        try:
+            # 10 days ago threshold
+            threshold_time = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+            
+            # Query workspaces that were uninstalled more than 10 days ago
+            uninstalled_workspaces = supabase_db.table("workspaces") \
+                .select("id, workspace_name") \
+                .eq("status", "UNINSTALLED") \
+                .lte("updated_at", threshold_time) \
+                .execute()
+                
+            for ws in (uninstalled_workspaces.data or []):
+                ws_id = ws["id"]
+                ws_name = ws.get("workspace_name", "Unknown")
+                print(f"Deleting data for uninstalled workspace '{ws_name}' ({ws_id}) after 10-day retention period...")
+                
+                # 1. Get templates associated with this workspace
+                templates = supabase_db.table("templates") \
+                    .select("id") \
+                    .eq("workspace_id", ws_id) \
+                    .execute()
+                
+                template_ids = [t["id"] for t in (templates.data or [])]
+                
+                # 2. Delete template_subitems
+                if template_ids:
+                    supabase_db.table("template_subitems") \
+                        .delete() \
+                        .in_("template_id", template_ids) \
+                        .execute()
+                
+                # 3. Delete templates
+                supabase_db.table("templates") \
+                    .delete() \
+                    .eq("workspace_id", ws_id) \
+                    .execute()
+                
+                # 4. Delete monitored_boards
+                supabase_db.table("monitored_boards") \
+                    .delete() \
+                    .eq("workspace_id", ws_id) \
+                    .execute()
+                
+                # 5. Delete workspace_settings
+                supabase_db.table("workspace_settings") \
+                    .delete() \
+                    .eq("workspace_id", ws_id) \
+                    .execute()
+                
+                # 6. Delete workspace_subscriptions
+                supabase_db.table("workspace_subscriptions") \
+                    .delete() \
+                    .eq("workspace_id", ws_id) \
+                    .execute()
+                
+                # 7. Delete automation_events
+                supabase_db.table("automation_events") \
+                    .delete() \
+                    .eq("workspace_id", ws_id) \
+                    .execute()
+                
+                # 8. Delete usage_metrics
+                supabase_db.table("usage_metrics") \
+                    .delete() \
+                    .eq("workspace_id", ws_id) \
+                    .execute()
+                
+                # 9. Delete usage_logs
+                supabase_db.table("usage_logs") \
+                    .delete() \
+                    .eq("workspace_id", ws_id) \
+                    .execute()
+                
+                # 10. Delete queue_jobs
+                supabase_db.table("queue_jobs") \
+                    .delete() \
+                    .eq("workspace_id", ws_id) \
+                    .execute()
+                
+                # 11. Delete ai_suggestions
+                supabase_db.table("ai_suggestions") \
+                    .delete() \
+                    .eq("workspace_id", ws_id) \
+                    .execute()
+                
+                # 12. Delete webhook_deduplication
+                supabase_db.table("webhook_deduplication") \
+                    .delete() \
+                    .eq("workspace_id", ws_id) \
+                    .execute()
+                
+                # 13. Delete users
+                supabase_db.table("users") \
+                    .delete() \
+                    .eq("workspace_id", ws_id) \
+                    .execute()
+                
+                # 14. Delete the workspace itself
+                supabase_db.table("workspaces") \
+                    .delete() \
+                    .eq("id", ws_id) \
+                    .execute()
+                    
+                print(f"Successfully and permanently deleted all data for workspace '{ws_name}' ({ws_id}).")
+                
+        except Exception as e:
+            print(f"Data deletion cron error: {e}")
+            
+        await asyncio.sleep(3600 * 24) # Sleep 1 day
+
 async def run_worker():
     """
     Polls queue_jobs every 3 seconds.
@@ -647,6 +764,9 @@ async def run_worker():
     
     # Start the billing background cron job concurrently
     asyncio.create_task(run_billing_cron())
+    
+    # Start the data deletion background cron job concurrently
+    asyncio.create_task(run_data_deletion_cron())
 
     while True:
         try:

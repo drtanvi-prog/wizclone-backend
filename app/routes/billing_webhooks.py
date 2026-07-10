@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request, HTTPException, Body
 import json
+from datetime import datetime, timezone
 from app.core.database import db
 
 router = APIRouter(prefix="/api/webhooks", tags=["Billing Webhooks"])
@@ -161,7 +162,8 @@ async def handle_app_events(
             try:
                 db.table("workspaces").update({
                     "status": "UNINSTALLED",
-                    "is_active": False
+                    "is_active": False,
+                    "updated_at": datetime.now(timezone.utc).isoformat()
                 }).eq("monday_account_id", str(account_id)).execute()
             except Exception:
                 pass
