@@ -133,7 +133,9 @@ async def process_job(job: dict):
         if usage_res.data:
             copies_used = usage_res.data[0].get("copies_used", 0)
             
-        # Dynamically fetch limit from plans table
+        # Dynamically fetch limit from plans table — single source of truth.
+        # If the query fails we fail open (allow the job through) rather than
+        # silently enforce a wrong limit that could break future plan tiers.
         max_copies = None
         try:
             plan_res = supabase_db.table("plans") \
@@ -144,8 +146,10 @@ async def process_job(job: dict):
             if plan_res.data:
                 max_copies = plan_res.data.get("max_copies_per_month")
         except Exception as e:
-            print(f"[Worker] Error querying plans table for limit: {e}")
+            print(f"[Worker] Could not fetch plan limit for '{plan_tier}' — failing open: {e}")
+            max_copies = None  # Allow job through; do NOT guess a limit
             
+        # max_copies = None means unlimited (e.g. BUSINESS) or DB was unreachable — allow through
         if max_copies is not None and copies_used >= max_copies:
             print(f"[Worker] Plan '{plan_tier}' limit reached ({max_copies} copies) — skipping job {job_id}")
             await _update_event(
@@ -631,6 +635,14 @@ async def run_billing_cron():
                     .eq("id", ws_id) \
                     .neq("plan_tier", "FREE") \
                     .execute()
+
+            # Clean up expired webhook deduplication records (prevent table bloat)
+            expired_threshold = datetime.now(timezone.utc).isoformat()
+            supabase_db.table("webhook_deduplication") \
+                .delete() \
+                .lte("expires_at", expired_threshold) \
+                .execute()
+            print(f"[Worker] Billing cron: cleaned up expired webhook deduplication records.")
         except Exception as e:
             print(f"[Worker] Billing cron error: {e}")
             
@@ -740,7 +752,13 @@ async def run_data_deletion_cron():
                     .eq("workspace_id", ws_id) \
                     .execute()
                 
-                # 14. Delete the workspace itself
+                # 14. Delete audit_logs
+                supabase_db.table("audit_logs") \
+                    .delete() \
+                    .eq("workspace_id", ws_id) \
+                    .execute()
+                
+                # 15. Delete the workspace itself
                 supabase_db.table("workspaces") \
                     .delete() \
                     .eq("id", ws_id) \
