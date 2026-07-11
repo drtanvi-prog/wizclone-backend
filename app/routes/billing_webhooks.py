@@ -157,16 +157,51 @@ async def handle_app_events(
 
     # Group 5: Uninstall / Install
     elif event_type == "uninstall":
-        print("[billing webhook] │ App Uninstalled")
+        print("[billing webhook] │ App Uninstalled - Wiping all data immediately")
         if account_id:
             try:
-                db.table("workspaces").update({
-                    "status": "UNINSTALLED",
-                    "is_active": False,
-                    "updated_at": datetime.now(timezone.utc).isoformat()
-                }).eq("monday_account_id", str(account_id)).execute()
-            except Exception:
-                pass
+                ws_res = db.table("workspaces").select("id").eq("monday_account_id", str(account_id)).execute()
+                if ws_res.data:
+                    ws_id = ws_res.data[0]["id"]
+                    
+                    # 1. Get and delete templates and subitems
+                    templates = db.table("templates").select("id").eq("workspace_id", ws_id).execute()
+                    template_ids = [t["id"] for t in (templates.data or [])]
+                    if template_ids:
+                        db.table("template_subitems").delete().in_("template_id", template_ids).execute()
+                    db.table("templates").delete().eq("workspace_id", ws_id).execute()
+                    
+                    # 2. Delete monitored boards
+                    db.table("monitored_boards").delete().eq("workspace_id", ws_id).execute()
+                    
+                    # 3. Delete workspace settings
+                    db.table("workspace_settings").delete().eq("workspace_id", ws_id).execute()
+                    try:
+                        db.table("workspace_subscriptions").delete().eq("workspace_id", ws_id).execute()
+                    except Exception:
+                        pass
+                    
+                    # 4. Delete event logs & metrics
+                    db.table("automation_events").delete().eq("workspace_id", ws_id).execute()
+                    db.table("usage_metrics").delete().eq("workspace_id", ws_id).execute()
+                    db.table("usage_logs").delete().eq("workspace_id", ws_id).execute()
+                    
+                    # 5. Delete queue jobs & suggestions
+                    db.table("queue_jobs").delete().eq("workspace_id", ws_id).execute()
+                    db.table("ai_suggestions").delete().eq("workspace_id", ws_id).execute()
+                    db.table("webhook_deduplication").delete().eq("workspace_id", ws_id).execute()
+                    
+                    # 6. Delete users
+                    try:
+                        db.table("users").delete().eq("workspace_id", ws_id).execute()
+                    except Exception:
+                        pass
+                    
+                    # 7. Delete workspace itself
+                    db.table("workspaces").delete().eq("id", ws_id).execute()
+                    print(f"[billing webhook] Permanent data wipe completed for workspace {ws_id}")
+            except Exception as e:
+                print(f"[billing webhook] Error wiping workspace data: {e}")
                 
     elif event_type == "install":
         print("[billing webhook] │ App Installed (Handled by OAuth)")
