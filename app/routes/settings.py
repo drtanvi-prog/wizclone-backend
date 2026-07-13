@@ -542,7 +542,24 @@ async def delete_monitored_board(
     Deletes a monitored board (triggered by the trash icon).
     Removes the webhook from monday.com and soft deletes it from the DB.
     """
-    workspace = get_workspace_by_monday_id(workspaceId, db)
+    token_data = getattr(request.state, "token_data", {})
+    account_id = token_data.get("account_id")
+
+    if account_id:
+        try:
+            ws_result = db.table("workspaces") \
+                .select("id, access_token") \
+                .eq("monday_account_id", int(account_id)) \
+                .single() \
+                .execute()
+            workspace = ws_result.data
+        except Exception:
+            workspace = None
+        if not workspace:
+            raise HTTPException(status_code=404, detail="Workspace not found")
+    else:
+        workspace = get_workspace_by_monday_id(workspaceId, db)
+
     workspace_uuid = workspace["id"]
     access_token   = workspace["access_token"]
 

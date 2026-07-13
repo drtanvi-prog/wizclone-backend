@@ -33,7 +33,9 @@ app = FastAPI(
     title            = "WizClone API",
     version          = "1.0.0",
     description      = "Smart Template & Subitem Automation for monday.com",
-    docs_url         = "/docs",
+    docs_url         = None if os.getenv("ENV") == "prod" else "/docs",
+    redoc_url        = None if os.getenv("ENV") == "prod" else "/redoc",
+    openapi_url      = None if os.getenv("ENV") == "prod" else "/openapi.json",
     redirect_slashes = False,
 )
 
@@ -43,9 +45,15 @@ app = FastAPI(
 # ─────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins     = ["*"],
+    allow_origins     = [
+        "https://*.monday.com",
+        "https://monday.com",
+        "http://localhost:3000",
+        "http://localhost:5173",
+        os.getenv("FRONTEND_URL", "http://localhost:3000")
+    ],
     allow_credentials = True,
-    allow_methods     = ["*"],
+    allow_methods     = ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers     = ["*"],
 )
 
@@ -231,7 +239,8 @@ async def health():
         app.state.db.table("workspaces").select("id").limit(1).execute()
         return {"status": "ok", "db": "connected"}
     except Exception as e:
-        return {"status": "error", "db": str(e)}
+        print(f"[Health] DB check failed: {e}")
+        return {"status": "error", "db": "connection failed"}
 
 
 @app.get("/routes-debug", tags=["Health"])

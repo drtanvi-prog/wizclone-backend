@@ -19,8 +19,6 @@
 # ─────────────────────────────────────────────────────────────
 
 import json
-import hmac
-import hashlib
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Request
@@ -28,53 +26,11 @@ from fastapi.responses import JSONResponse
 
 from app.core.database import db as supabase_db
 from app.core.config import settings
+from app.services.webhook import _verify_signature, _is_plan_limit_reached
 
 router = APIRouter(tags=["Webhook"])
 
 
-def _verify_signature(body: bytes, signature: str) -> bool:
-    if not settings.monday_signing_secret:
-        return True
-    expected = hmac.new(
-        settings.monday_signing_secret.encode(),
-        body,
-        hashlib.sha256,
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature)
-
-
-def _is_plan_limit_reached(workspace_uuid: str, plan_tier: str) -> bool:
-    if plan_tier == "BUSINESS":
-        return False
-
-    cycle_start = datetime.now(timezone.utc) \
-        .replace(day=1, hour=0, minute=0, second=0, microsecond=0) \
-        .date().isoformat()
-
-    try:
-        usage = supabase_db.table("usage_metrics") \
-            .select("copies_used") \
-            .eq("workspace_id",        workspace_uuid) \
-            .eq("billing_cycle_start", cycle_start) \
-            .execute()
-
-        copies_used = usage.data[0]["copies_used"] if usage.data else 0
-
-        plan = supabase_db.table("plans") \
-            .select("max_copies_per_month") \
-            .eq("plan_name", plan_tier) \
-            .single() \
-            .execute()
-
-        max_copies = plan.data.get("max_copies_per_month") if plan.data else None
-
-        if max_copies is None:
-            return False
-
-        return copies_used >= max_copies
-
-    except Exception:
-        return False
 
 
 @router.post("/webhook/monday/{workspace_id}")
@@ -84,9 +40,10 @@ async def receive_webhook(request: Request, workspace_id: str):
 
     # ── Step 1: Verify signature ──
     signature = request.headers.get("x-monday-signature", "")
-    if signature and not _verify_signature(body, signature):
-        print("[Webhook] Invalid signature")
-        return JSONResponse({"status": "ignored", "reason": "invalid signature"})
+    if settings.monday_signing_secret:
+        if not signature or not _verify_signature(body, signature):
+            print("[Webhook] Missing or invalid signature — rejecting")
+            return JSONResponse({"status": "rejected", "reason": "invalid signature"}, status_code=401)
 
     # ── Parse JSON ──
     try:
@@ -248,7 +205,7 @@ async def receive_webhook(request: Request, workspace_id: str):
 
     except Exception as e:
         print(f"[Webhook] Failed to save automation_event: {e}")
-        return JSONResponse({"status": "error", "reason": str(e)})
+        return JSONResponse({"status": "error", "reason": "Internal processing error"}, status_code=500)
 
     # ── Step 9: Save queue_job ──
     try:
@@ -274,9 +231,4 @@ async def receive_webhook(request: Request, workspace_id: str):
     except Exception as e:
         print(f"[Webhook] Failed to save queue_job: {e}")
 
-    return JSONResponse({
-        "status":              "queued",
-        "event_id":            event_id,
-        "item_name":           item_name,
-        "automation_event_id": automation_event_id,
-    })
+    return JSONResponse({"status": "queued"})

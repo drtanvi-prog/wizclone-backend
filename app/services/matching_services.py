@@ -315,11 +315,18 @@ async def _ai_semantic_match(
 
         matched_name = parts[0].strip()
         confidence   = float(parts[1].strip())
+        confidence   = max(0.0, min(100.0, confidence)) # Clamp to 0-100
 
-        # Safety: AI must return a name that exists in our template list
-        if matched_name not in template_names:
+        # Safety: AI must return a name that exists in our template list (case-insensitive)
+        matched_name_lower = matched_name.lower()
+        valid_templates_lower = {t.lower(): t for t in template_names}
+        
+        if matched_name_lower not in valid_templates_lower:
             print(f"[matching] AI returned unknown template '{matched_name}' — using difflib")
             return None
+            
+        # Get the actual cased name from our DB
+        matched_name = valid_templates_lower[matched_name_lower]
 
         print(f"[matching] AI Match: '{matched_name}' at {confidence}%")
 
@@ -453,7 +460,7 @@ def _fuzzy_match(
     return {
         "matched_name": best_name,
         "confidence":   round(best_score, 2),
-        "method":       "EXACT_MATCH",
+        "method":       "FUZZY_MATCH",
         "ai_used":      False,
     }
 

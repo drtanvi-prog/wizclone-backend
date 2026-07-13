@@ -18,6 +18,7 @@
 #       error_details
 # ─────────────────────────────────────────────────────────────
 
+import re
 from fastapi import APIRouter, HTTPException, Query, Depends, Request
 from supabase import Client
 from app.core.database import get_db
@@ -120,16 +121,18 @@ async def get_activity_log(
 
         # Apply search filter (item name or template name)
         if search and search.strip():
-            s = search.strip()
-            query = query.or_(
-                f"item_name.ilike.%{s}%,"
-                f"matched_template_name.ilike.%{s}%"
-            )
+            s = re.sub(r'[,\.\(\)\[\]\{\}]', '', search.strip())  # strip PostgREST operators
+            if s:
+                query = query.or_(
+                    f"item_name.ilike.%{s}%,"
+                    f"matched_template_name.ilike.%{s}%"
+                )
 
         result = query.execute()
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch activity log: {str(e)}")
+        print(f"[ActivityLog] Failed to fetch activity log: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch activity log")
 
     events     = result.data or []
     total      = result.count or 0

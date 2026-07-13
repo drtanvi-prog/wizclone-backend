@@ -69,7 +69,7 @@ async def handle_app_events(
         print(f"[billing webhook] │ Handling Upgrade/Renewal: {event_type}")
         if account_id:
             try:
-                ws_res = db.table("workspaces").select("id").eq("monday_account_id", str(account_id)).limit(1).execute()
+                ws_res = db.table("workspaces").select("id").eq("monday_account_id", int(account_id)).limit(1).execute()
                 if ws_res.data:
                     workspace_uuid = ws_res.data[0]["id"]
                     plan_res = db.table("plans").select("id").ilike("plan_name", str(monday_plan_slug)).limit(1).execute()
@@ -105,7 +105,7 @@ async def handle_app_events(
         print(f"[billing webhook] │ Handling Cancellation: {event_type}")
         if account_id:
             try:
-                ws_res = db.table("workspaces").select("id").eq("monday_account_id", str(account_id)).limit(1).execute()
+                ws_res = db.table("workspaces").select("id").eq("monday_account_id", int(account_id)).limit(1).execute()
                 if ws_res.data:
                     workspace_uuid = ws_res.data[0]["id"]
                     db.table("workspace_subscriptions").update({
@@ -119,7 +119,7 @@ async def handle_app_events(
         print(f"[billing webhook] │ Handling Immediate Downgrade: {event_type}")
         if account_id:
             try:
-                ws_res = db.table("workspaces").select("id").eq("monday_account_id", str(account_id)).limit(1).execute()
+                ws_res = db.table("workspaces").select("id").eq("monday_account_id", int(account_id)).limit(1).execute()
                 if ws_res.data:
                     workspace_uuid = ws_res.data[0]["id"]
                     db.table("workspace_subscriptions").update({
@@ -136,7 +136,7 @@ async def handle_app_events(
         print(f"[billing webhook] │ Handling Trial Started")
         if account_id:
             try:
-                ws_res = db.table("workspaces").select("id").eq("monday_account_id", str(account_id)).limit(1).execute()
+                ws_res = db.table("workspaces").select("id").eq("monday_account_id", int(account_id)).limit(1).execute()
                 if ws_res.data:
                     workspace_uuid = ws_res.data[0]["id"]
                     plan_res = db.table("plans").select("id").ilike("plan_name", "PRO").limit(1).execute()
@@ -163,7 +163,7 @@ async def handle_app_events(
         print(f"[billing webhook] │ Handling Past Due")
         if account_id:
             try:
-                ws_res = db.table("workspaces").select("id").eq("monday_account_id", str(account_id)).limit(1).execute()
+                ws_res = db.table("workspaces").select("id").eq("monday_account_id", int(account_id)).limit(1).execute()
                 if ws_res.data:
                     db.table("workspace_subscriptions").update({
                         "billing_status": "PAST_DUE"
@@ -179,9 +179,10 @@ async def handle_app_events(
                 db.table("workspaces").update({
                     "status": "UNINSTALLED",
                     "is_active": False,
+                    "access_token": "",
                     "updated_at": datetime.now(timezone.utc).isoformat()
-                }).eq("monday_account_id", str(account_id)).execute()
-                print(f"[billing webhook] Workspace for account {account_id} marked as UNINSTALLED.")
+                }).eq("monday_account_id", int(account_id)).execute()
+                print(f"[billing webhook] Workspace for account {account_id} marked as UNINSTALLED and access_token cleared.")
             except Exception as e:
                 print(f"[billing webhook] Error marking workspace as uninstalled: {e}")
                 

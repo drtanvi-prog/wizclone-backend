@@ -56,6 +56,45 @@ from app.schemas.auth  import (
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
 
+def _clean_workspace_data(workspace_id: str, db: Client):
+    """
+    Clean up all previous configurations when an app is reinstalled.
+    """
+    print(f"[Auth] Wiping previous configuration data for workspace {workspace_id}")
+    try:
+        # 1. Get and delete templates and subitems
+        templates = db.table("templates").select("id").eq("workspace_id", workspace_id).execute()
+        template_ids = [t["id"] for t in (templates.data or [])]
+        if template_ids:
+            db.table("template_subitems").delete().in_("template_id", template_ids).execute()
+        db.table("templates").delete().eq("workspace_id", workspace_id).execute()
+        
+        # 2. Delete monitored boards
+        db.table("monitored_boards").delete().eq("workspace_id", workspace_id).execute()
+        
+        # 3. Delete workspace settings
+        db.table("workspace_settings").delete().eq("workspace_id", workspace_id).execute()
+        
+        # 4. Delete event logs & metrics
+        db.table("automation_events").delete().eq("workspace_id", workspace_id).execute()
+        db.table("usage_metrics").delete().eq("workspace_id", workspace_id).execute()
+        db.table("usage_logs").delete().eq("workspace_id", workspace_id).execute()
+        
+        # 5. Delete queue jobs & suggestions & deduplication
+        db.table("queue_jobs").delete().eq("workspace_id", workspace_id).execute()
+        db.table("ai_suggestions").delete().eq("workspace_id", workspace_id).execute()
+        db.table("webhook_deduplication").delete().eq("workspace_id", workspace_id).execute()
+        
+        # 6. Delete audit logs
+        try:
+            db.table("audit_logs").delete().eq("workspace_id", workspace_id).execute()
+        except Exception:
+            pass
+            
+    except Exception as e:
+        print(f"[Auth] Error cleaning workspace data: {e}")
+
+
 async def _sync_subscription(workspace_uuid: str, access_token: str, db: Client) -> str:
     """
     Fetch the subscription status from monday.com and sync it to the workspaces and
@@ -178,7 +217,7 @@ async def authorization(token: str = Query(...), request: Request = None, db: Cl
     params = urllib.parse.urlencode({
         "client_id":    settings.monday_client_id,
         "redirect_uri": f"{settings.app_base_url}/api/auth/callback",
-        "scope":        "boards:read boards:write webhooks:read webhooks:write workspaces:read",
+        "scope":        "me:read account:read boards:read boards:write workspaces:read webhooks:write",
         "state":        token,   # full token passed as state
         "account_id":   account_id,
     })
@@ -234,6 +273,18 @@ async def monday_oauth_authorized(
         )
     account_id = res.json()["data"]["me"]["account"]["id"]
 
+    # Check if this workspace already exists and was uninstalled (reinstall)
+    is_reinstall = False
+    try:
+        existing_ws = db.table("workspaces") \
+            .select("id, status") \
+            .eq("monday_account_id", int(account_id)) \
+            .execute()
+        if existing_ws.data and existing_ws.data[0].get("status") == "UNINSTALLED":
+            is_reinstall = True
+    except Exception as e:
+        print(f"[Auth] Error checking for reinstall status in authorized callback: {e}")
+
     # Save to DB
     res_db = db.table("workspaces").upsert(
         {
@@ -251,6 +302,8 @@ async def monday_oauth_authorized(
 
     if res_db.data:
         workspace_uuid = res_db.data[0]["id"]
+        if is_reinstall:
+            _clean_workspace_data(workspace_uuid, db)
         await _sync_subscription(workspace_uuid, access_token, db)
 
     print("Token saved for account:", account_id)
@@ -297,7 +350,8 @@ async def oauth_callback(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Token exchange failed: {str(e)}")
+        print(f"[Auth] Token exchange failed: {e}")
+        raise HTTPException(status_code=502, detail="Token exchange failed")
 
     # ── Step 2: Get account_id from monday API
     try:
@@ -319,11 +373,24 @@ async def oauth_callback(
         account_id = data["data"]["me"]["account"]["id"]
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch account_id: {str(e)}")
+        print(f"[Auth] Failed to fetch account_id: {e}")
+        raise HTTPException(status_code=500, detail="Failed to complete OAuth flow")
 
     # ── Step 3: Save to DB
     print(f"[Auth] Fetched account_id: {account_id}. Saving to DB...")
     try:
+        # Check if this workspace already exists and was uninstalled (reinstall)
+        is_reinstall = False
+        try:
+            existing_ws = db.table("workspaces") \
+                .select("id, status") \
+                .eq("monday_account_id", int(account_id)) \
+                .execute()
+            if existing_ws.data and existing_ws.data[0].get("status") == "UNINSTALLED":
+                is_reinstall = True
+        except Exception as e:
+            print(f"[Auth] Error checking for reinstall status in oauth callback: {e}")
+
         res_db = db.table("workspaces").upsert(
             {
                 "monday_account_id": int(account_id),
@@ -340,10 +407,13 @@ async def oauth_callback(
 
         if res_db.data:
             workspace_uuid = res_db.data[0]["id"]
+            if is_reinstall:
+                _clean_workspace_data(workspace_uuid, db)
             await _sync_subscription(workspace_uuid, access_token, db)
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"DB save failed: {str(e)}")
+        print(f"[Auth] DB save failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save authorization")
 
     # ── Step 4: Return page that closes the OAuth tab automatically
     # The app panel's polling loop will detect has_oauth=true on the next tick.
@@ -405,9 +475,9 @@ async def verify_auth(payload: VerifyRequest, request: Request, db: Client = Dep
             user_id    = dat.get("user_id")
             is_admin   = dat.get("is_admin", False)
 
-    # ── Step 2: Fallback to body params when token unavailable
-    if not account_id and payload.accountId:
-        account_id = payload.accountId
+    # ── Step 2: Ensure account_id exists
+    if not account_id:
+        raise HTTPException(status_code=401, detail="Cannot identify account — session token missing or invalid")
     if not user_id and payload.userId:
         user_id = payload.userId
 
@@ -458,7 +528,8 @@ async def verify_auth(payload: VerifyRequest, request: Request, db: Client = Dep
                     .execute()
                 workspace = ws_result.data[0] if ws_result.data else None
             except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Failed to resolve workspace: {str(e)}")
+                print(f"[Auth] Failed to resolve workspace: {e}")
+                raise HTTPException(status_code=500, detail="Failed to resolve workspace")
 
     if not workspace:
         raise HTTPException(status_code=500, detail="Workspace could not be created or found")

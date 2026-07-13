@@ -297,7 +297,7 @@ async def process_job(job: dict):
             template_id   = template_id,
             template_name = template_name,
             confidence    = confidence,
-            method        = None,
+            method        = match["method"],
             ai_used       = match["ai_used"],
             processing_ms = processing_ms,
             failed_names  = failed_names,
@@ -526,7 +526,7 @@ async def _update_event(
         "subitems_failed":  failed,
         "confidence_score": confidence / 100.0,   # store as 0.0–1.0 in DB
         "match_method":     method,
-        "ai_fallback_used": not ai_used,
+        "ai_fallback_used": ai_used,
         "processing_ms":    processing_ms,
         "completed_at":     datetime.now(timezone.utc).isoformat(),
     }
@@ -650,10 +650,10 @@ async def run_billing_cron():
 
 async def run_data_deletion_cron():
     """
-    Runs every hour to check for workspaces with status='UNINSTALLED'
+    Runs every 24 hours to check for workspaces with status='UNINSTALLED'
     and updated_at <= 10 days ago, and permanently deletes all their data.
     """
-    print("[Worker] Data deletion cron started. Checking for uninstalled workspaces older than 10 days every hour.")
+    print("[Worker] Data deletion cron started. Checking for uninstalled workspaces older than 10 days every 24 hours.")
     while True:
         try:
             # 10 days ago threshold
@@ -665,10 +665,15 @@ async def run_data_deletion_cron():
                 .eq("status", "UNINSTALLED") \
                 .lte("updated_at", threshold_time) \
                 .execute()
-                
-            for ws in (uninstalled_workspaces.data or []):
-                ws_id = ws["id"]
-                ws_name = ws.get("workspace_name", "Unknown")
+        except Exception as e:
+            print(f"[Worker] Data deletion cron — failed to query workspaces: {e}")
+            await asyncio.sleep(3600 * 24)
+            continue
+
+        for ws in (uninstalled_workspaces.data or []):
+            ws_id = ws["id"]
+            ws_name = ws.get("workspace_name", "Unknown")
+            try:
                 print(f"Deleting data for uninstalled workspace '{ws_name}' ({ws_id}) after 10-day retention period...")
                 
                 # 1. Get templates associated with this workspace
@@ -765,10 +770,10 @@ async def run_data_deletion_cron():
                     .execute()
                     
                 print(f"Successfully and permanently deleted all data for workspace '{ws_name}' ({ws_id}).")
-                
-        except Exception as e:
-            print(f"Data deletion cron error: {e}")
-            
+            except Exception as e:
+                print(f"[Worker] Data deletion failed for workspace '{ws_name}' ({ws_id}): {e}")
+                continue  # move to next workspace
+
         await asyncio.sleep(3600 * 24) # Sleep 1 day
 
 async def run_worker():
