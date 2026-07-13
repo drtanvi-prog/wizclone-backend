@@ -118,8 +118,12 @@ async def _sync_subscription(workspace_uuid: str, access_token: str, db: Client)
             app_sub = data.get("data", {}).get("app_subscription")
             if app_sub and app_sub.get("plan_id"):
                 plan_id_upper = app_sub["plan_id"].upper()
-                if "PRO" in plan_id_upper or "BUSINESS" in plan_id_upper or "ENTERPRISE" in plan_id_upper:
-                    plan_tier = "PRO"
+                if "STARTER" in plan_id_upper:
+                    plan_tier = "STARTER"
+                elif "GROWTH" in plan_id_upper or "PRO" in plan_id_upper:
+                    plan_tier = "GROWTH"
+                elif "BUSINESS" in plan_id_upper or "ENTERPRISE" in plan_id_upper:
+                    plan_tier = "BUSINESS"
                 else:
                     plan_tier = plan_id_upper
 

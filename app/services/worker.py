@@ -776,6 +776,37 @@ async def run_data_deletion_cron():
 
         await asyncio.sleep(3600 * 24) # Sleep 1 day
 
+async def run_activity_log_retention_cron():
+    print("[Worker] Activity log retention cron started (runs daily)")
+    while True:
+        try:
+            # Starter: 7 days
+            starter_date = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+            # Growth: 90 days
+            growth_date = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+            # Business: 365 days
+            biz_date = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
+            
+            # Fetch workspaces grouped by tier
+            workspaces = supabase_db.table("workspaces").select("id, plan_tier").execute()
+            for ws in (workspaces.data or []):
+                tier = ws.get("plan_tier", "FREE").upper()
+                cutoff = starter_date if tier in ("FREE", "STARTER", "BASIC") else growth_date if tier in ("PRO", "GROWTH") else biz_date
+                
+                try:
+                    supabase_db.table("automation_events") \
+                        .delete() \
+                        .eq("workspace_id", ws["id"]) \
+                        .lt("created_at", cutoff) \
+                        .execute()
+                except Exception as e:
+                    print(f"Error cleaning logs for {ws['id']}: {e}")
+                    
+        except Exception as e:
+            print(f"[Worker] Retention cron error: {e}")
+            
+        await asyncio.sleep(3600 * 24)
+
 async def run_worker():
     """
     Polls queue_jobs every 3 seconds.
@@ -790,6 +821,9 @@ async def run_worker():
     
     # Start the data deletion background cron job concurrently
     asyncio.create_task(run_data_deletion_cron())
+    
+    # Start the activity log retention background cron job concurrently
+    asyncio.create_task(run_activity_log_retention_cron())
 
     while True:
         try:

@@ -205,9 +205,6 @@ def _is_plan_limit_reached(workspace_uuid: str, plan_tier: str) -> bool:
     Returns True  → limit reached, block this event
     Returns False → within limit, continue
     """
-    if plan_tier == "BUSINESS":
-        return False
-
     cycle_start = datetime.now(timezone.utc) \
         .replace(day=1, hour=0, minute=0, second=0, microsecond=0) \
         .date().isoformat()

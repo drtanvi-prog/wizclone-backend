@@ -139,7 +139,8 @@ async def handle_app_events(
                 ws_res = db.table("workspaces").select("id").eq("monday_account_id", int(account_id)).limit(1).execute()
                 if ws_res.data:
                     workspace_uuid = ws_res.data[0]["id"]
-                    plan_res = db.table("plans").select("id").ilike("plan_name", "PRO").limit(1).execute()
+                    plan_name = str(monday_plan_slug).upper() if monday_plan_slug else "STARTER"
+                    plan_res = db.table("plans").select("id").ilike("plan_name", plan_name).limit(1).execute()
                     if plan_res.data:
                         upsert_data = {
                             "workspace_id": workspace_uuid,
@@ -147,6 +148,9 @@ async def handle_app_events(
                             "billing_status": "TRIAL",
                             "is_active": True
                         }
+                        if renewal_date:
+                            upsert_data["current_period_end"] = renewal_date
+                            
                         existing_sub = db.table("workspace_subscriptions").select("id").eq("workspace_id", workspace_uuid).execute()
                         if existing_sub.data:
                             db.table("workspace_subscriptions").update(upsert_data).eq("id", existing_sub.data[0]["id"]).execute()
@@ -154,10 +158,12 @@ async def handle_app_events(
                             db.table("workspace_subscriptions").insert(upsert_data).execute()
                             
                         db.table("workspaces").update({
-                            "plan_tier": "PRO"
+                            "plan_tier": plan_name,
+                            "status": "ACTIVE",
+                            "is_active": True
                         }).eq("id", workspace_uuid).execute()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[billing webhook] Error in app_trial_subscription_started: {e}")
                 
     elif event_type == "app_subscription_renewal_attempt_failed":
         print(f"[billing webhook] │ Handling Past Due")

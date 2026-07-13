@@ -373,6 +373,22 @@ async def save_settings(
     failed_boards = []
     if body.boards is not None:
 
+        max_boards = None
+        try:
+            plan_res = db.table("plans").select("max_boards").eq("plan_name", workspace["plan_tier"].upper()).single().execute()
+            if plan_res.data:
+                max_boards = plan_res.data.get("max_boards")
+        except Exception:
+            pass
+            
+        requested_enabled = sum(1 for b in body.boards if b.board_enabled)
+        
+        if max_boards is not None and requested_enabled > max_boards:
+            raise HTTPException(
+                status_code=403, 
+                detail=f"Plan limit reached. Your {workspace['plan_tier']} plan allows up to {max_boards} boards."
+            )
+
         # Fetch all current and past board states in one query to allow resurrecting deleted boards
         try:
             all_existing_result = db.table("monitored_boards") \

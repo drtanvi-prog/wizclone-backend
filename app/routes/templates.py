@@ -461,14 +461,36 @@ async def generate_template(
     """
     workspace_uuid = get_workspace_uuid_for_request(request, workspaceId, db)
 
-    ws_res = db.table("workspaces").select("access_token").eq("id", workspace_uuid).execute()
-    access_token = ws_res.data[0].get("access_token", "") if ws_res.data else ""
+    ws_res = db.table("workspaces").select("id, account_id, plan_tier, access_token").eq("id", workspace_uuid).execute()
+    if not ws_res.data:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    workspace = ws_res.data[0]
+    access_token = workspace.get("access_token", "")
+
+    # Check usage metrics for this month
+    cycle_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).date().isoformat()
+    usage = db.table("usage_metrics").select("id, ai_generations_used").eq("workspace_id", workspace["id"]).eq("billing_cycle_start", cycle_start).execute()
+    ai_used = usage.data[0].get("ai_generations_used", 0) if usage.data else 0
+
+    max_ai = None
+    try:
+        plan_tier = workspace.get("plan_tier")
+        if plan_tier:
+            plan = db.table("plans").select("max_ai_generations").eq("plan_name", plan_tier.upper()).single().execute()
+            if plan.data: max_ai = plan.data.get("max_ai_generations")
+    except Exception: pass
+    
+    if max_ai is not None and ai_used >= max_ai:
+        raise HTTPException(status_code=403, detail=f"Plan limit hit: {max_ai} AI generations per month.")
 
     # Run AI generation
     from app.services.matching_services import generate_template_from_ai
     result = await generate_template_from_ai(body.prompt, access_token)
     
     if result:
+        # Increment usage metric
+        if usage.data:
+            db.table("usage_metrics").update({"ai_generations_used": ai_used + 1}).eq("id", usage.data[0]["id"]).execute()
         return {
             "prompt": body.prompt,
             "ai_result": result,
